@@ -58,8 +58,12 @@ export interface BrokerageTransaction {
   id: string
   event_time: string
   event_type: string
+  quantity: number | null
+  price_usd: number | null
   amount_usd: number | null
   realized_pnl_usd: number | null
+  account: Pick<Account, 'name' | 'institution'> | null
+  asset: Pick<Asset, 'symbol' | 'name'> | null
 }
 
 export interface SpendTransaction {

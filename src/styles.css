@@ -285,6 +285,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .expandable-asset.open > button > svg { transform: rotate(90deg); color: var(--green); }
 .expandable-asset b { color: #e4e9eb; font-size: 9px; text-align: right; }
 .expandable-asset em { color: #6d7981; font: normal 8px 'DM Mono', monospace; text-align: right; }
+.asset-pnl { color: #69757d; font: 500 8px 'DM Mono', monospace; text-align: right; }
 .symbol-cell { min-width: 0; display: grid; gap: 1px; }
 .symbol-cell strong { color: #dfe5e8; font-size: 9px; }
 .symbol-cell small { color: #616d75; font-size: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -296,11 +297,28 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .pnl-summary { display: grid; gap: 1px; text-align: right; }
 .pnl-summary small { color: #66727a; font-size: 7px; }
 .pnl-summary strong { font-size: 10px; }
-.equity-columns { display: grid; grid-template-columns: minmax(145px, 1fr) 55px 65px 50px; gap: 7px; padding: 0 2px 5px 22px; color: #59656d; font: 7px 'DM Mono', monospace; text-transform: uppercase; }
+.digital-rows .expandable-asset > button { grid-template-columns: 13px minmax(120px, 1fr) 62px 64px 42px; }
+.digital-breakdown { margin-left: 21px; }
+.digital-breakdown > div { grid-template-columns: minmax(70px, 1fr) 70px 90px 60px 58px; align-items: center; }
+.digital-breakdown b, .digital-breakdown em { font-size: 7px; text-align: right; }
+.equity-columns { display: grid; grid-template-columns: minmax(145px, 1fr) 55px 65px 62px 50px; gap: 7px; padding: 0 2px 5px 22px; color: #59656d; font: 7px 'DM Mono', monospace; text-transform: uppercase; }
 .equity-columns span:not(:first-child) { text-align: right; }
-.equity-rows .expandable-asset > button { grid-template-columns: 13px minmax(130px, 1fr) 55px 65px 50px; }
+.equity-rows .expandable-asset > button { grid-template-columns: 13px minmax(130px, 1fr) 55px 65px 62px 50px; }
 .equity-rows .expandable-asset > button > span:not(.symbol-cell) { text-align: right; font-size: 8px; }
-.equity-breakdown > div { grid-template-columns: 1fr auto minmax(110px, auto); }
+.equity-detail { padding-bottom: 7px; }
+.equity-breakdown > div { grid-template-columns: minmax(70px, 1fr) 80px 90px 62px 62px; align-items: center; }
+.equity-breakdown b, .equity-breakdown em { font-size: 7px; text-align: right; }
+.transaction-history { margin: 5px 0 3px 21px; padding: 7px 8px; background: #0b1014; border: 1px solid #20292f; border-radius: 6px; }
+.transaction-history > div:first-child { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 3px; }
+.transaction-history > div:first-child strong { color: #bfc8cc; font-size: 8px; }
+.transaction-history > div:first-child small { color: #5e6a72; font-size: 7px; }
+.transaction-history section { display: grid; grid-template-columns: 58px minmax(120px, 1fr) 60px 54px; gap: 7px; align-items: center; padding: 5px 0; border-top: 1px solid #1d2429; }
+.transaction-history time { color: #59656d; font: 7px 'DM Mono', monospace; }
+.transaction-history section > span { min-width: 0; display: grid; gap: 1px; }
+.transaction-history section > span strong { color: #c7cfd3; font-size: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.transaction-history section > span small { color: #616d75; font-size: 7px; }
+.transaction-history section > b, .transaction-history section > em { color: #cdd5d9; font: normal 7px 'DM Mono', monospace; text-align: right; }
+.transaction-history > p { margin: 7px 0 1px; color: #657179; font-size: 7px; line-height: 1.5; }
 .equity-footer { flex: 0 0 auto; display: flex; justify-content: space-between; padding-top: 6px; color: #59656d; font-size: 7px; }
 
 .overview-spending .panel-heading > span { color: #d6dfda; background: #18231e; }
@@ -416,7 +434,9 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .overview-kpis .net-worth-card { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; }
   .overview-kpis .net-worth-card p { align-self: flex-start; text-align: left; }
   .allocation-visual { grid-template-columns: 110px 1fr; }
-  .equity-columns { grid-template-columns: minmax(120px, 1fr) 55px 48px; }
-  .equity-columns span:nth-child(2), .equity-rows .expandable-asset > button > span:not(.symbol-cell) { display: none; }
+  .equity-columns { grid-template-columns: minmax(120px, 1fr) 65px 48px; }
+  .equity-columns span:nth-child(2), .equity-columns span:nth-child(4), .equity-rows .expandable-asset > button > span:not(.symbol-cell) { display: none; }
   .equity-rows .expandable-asset > button { grid-template-columns: 13px minmax(120px, 1fr) 65px 48px; }
+  .digital-rows .asset-pnl { display: none; }
+  .digital-rows .expandable-asset > button { grid-template-columns: 13px minmax(120px, 1fr) 62px 42px; }
 }

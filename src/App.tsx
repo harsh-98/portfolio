@@ -342,7 +342,7 @@ function Dashboard({ session }: { session: Session }) {
       supabase.from('portfolio_snapshots').select('*').order('snapshot_date', { ascending: true }).limit(90),
       supabase.from('position_snapshots').select('snapshot_date,source_key,quantity,price_usd,value_usd,account:accounts(name,institution),asset:assets(symbol,name,asset_class,network)').order('snapshot_date', { ascending: true }).limit(10000),
       supabase.from('sync_runs').select('id,source,status,records_written,message,started_at,finished_at').order('started_at', { ascending: false }).limit(20),
-      supabase.from('brokerage_transactions').select('id,event_time,event_type,amount_usd,realized_pnl_usd').order('event_time', { ascending: false }).limit(1000),
+      supabase.from('brokerage_transactions').select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,account:accounts(name,institution),asset:assets(symbol,name)').order('event_time', { ascending: false }).limit(1000),
       supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status').order('occurred_at', { ascending: false }).limit(1000),
     ])
     const failure = positionsResult.error || accountsResult.error || snapshotsResult.error || positionSnapshotsResult.error || syncRunsResult.error || brokerageResult.error || spendResult.error
@@ -352,7 +352,7 @@ function Dashboard({ session }: { session: Session }) {
     setSnapshots((snapshotsResult.data || []) as Snapshot[])
     setPositionSnapshots((positionSnapshotsResult.data || []) as unknown as PositionSnapshot[])
     setSyncRuns((syncRunsResult.data || []) as SyncRun[])
-    setBrokerageTransactions((brokerageResult.data || []) as BrokerageTransaction[])
+    setBrokerageTransactions((brokerageResult.data || []) as unknown as BrokerageTransaction[])
     setSpendTransactions((spendResult.data || []) as SpendTransaction[])
     setLoading(false)
   }, [])
@@ -403,14 +403,30 @@ function Dashboard({ session }: { session: Session }) {
   }, [positions])
   const equityPositions = positions.filter((position) => position.asset.asset_class === 'equity')
   const cryptoExposure = useMemo(() => {
-    const grouped = new Map<string, { symbol: string; name: string; value: number; quantity: number; breakdown: Map<string, number> }>()
+    const grouped = new Map<string, { symbol: string; name: string; value: number; quantity: number; pricedCost: number; pricedValue: number; pricedQuantity: number; breakdown: Map<string, { value: number; quantity: number; costBasis: number; pricedValue: number; pricedQuantity: number }> }>()
     positions.filter((position) => ['crypto', 'stablecoin'].includes(effectiveAssetClass(position.asset))).forEach((position) => {
       const symbol = canonicalCryptoSymbol(position.asset.symbol)
-      const current = grouped.get(symbol) || { symbol, name: position.asset.name, value: 0, quantity: 0, breakdown: new Map<string, number>() }
-      current.value += Number(position.value_usd)
-      current.quantity += Number(position.quantity)
+      const current = grouped.get(symbol) || { symbol, name: position.asset.name, value: 0, quantity: 0, pricedCost: 0, pricedValue: 0, pricedQuantity: 0, breakdown: new Map<string, { value: number; quantity: number; costBasis: number; pricedValue: number; pricedQuantity: number }>() }
+      const value = Number(position.value_usd)
+      const quantity = Number(position.quantity)
+      const costBasis = position.cost_basis_usd == null ? 0 : Number(position.cost_basis_usd)
+      current.value += value
+      current.quantity += quantity
+      if (position.cost_basis_usd != null) {
+        current.pricedCost += costBasis
+        current.pricedValue += value
+        current.pricedQuantity += quantity
+      }
       const platform = positionPlatform(position)
-      current.breakdown.set(platform, (current.breakdown.get(platform) || 0) + Number(position.value_usd))
+      const detail = current.breakdown.get(platform) || { value: 0, quantity: 0, costBasis: 0, pricedValue: 0, pricedQuantity: 0 }
+      detail.value += value
+      detail.quantity += quantity
+      if (position.cost_basis_usd != null) {
+        detail.costBasis += costBasis
+        detail.pricedValue += value
+        detail.pricedQuantity += quantity
+      }
+      current.breakdown.set(platform, detail)
       grouped.set(symbol, current)
     })
     return [...grouped.values()].filter((item) => item.value >= 100).sort((a, b) => b.value - a.value)
@@ -443,6 +459,15 @@ function Dashboard({ session }: { session: Session }) {
   }, [equityPositions])
   const stockCostBasis = equityExposure.reduce((sum, asset) => sum + asset.pricedCost, 0)
   const stockPnl = equityExposure.reduce((sum, asset) => sum + asset.pricedValue - asset.pricedCost, 0)
+  const brokerageByAsset = useMemo(() => {
+    const grouped = new Map<string, BrokerageTransaction[]>()
+    brokerageTransactions.forEach((transaction) => {
+      if (!transaction.asset?.symbol) return
+      const symbol = canonicalEquitySymbol(transaction.asset.symbol)
+      grouped.set(symbol, [...(grouped.get(symbol) || []), transaction])
+    })
+    return grouped
+  }, [brokerageTransactions])
   const cryptoHistory = useMemo(() => {
     const grouped = new Map<string, { date: string; total: number; platforms: Map<string, number> }>()
     positionSnapshots.forEach((snapshot) => {
@@ -561,13 +586,33 @@ function Dashboard({ session }: { session: Session }) {
 
                 <article className="panel overview-digital">
                   <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>Digital assets</h2></div><span>{cryptoExposure.length} assets</span></div>
-                  <div className="asset-rows">{cryptoExposure.map((asset) => { const details = [...asset.breakdown.entries()].sort((a, b) => b[1] - a[1]); const open = expandedDigital === asset.symbol; return <div className={`expandable-asset ${open ? 'open' : ''}`} key={asset.symbol}><button onClick={() => setExpandedDigital(open ? null : asset.symbol)}><ChevronRight size={13} /><span className="symbol-cell"><strong>{asset.symbol}</strong><small>{details.slice(0, 2).map(([name, value]) => `${name} ${((value / asset.value) * 100).toFixed(0)}%`).join(' · ')}{details.length > 2 ? ` +${details.length - 2}` : ''}</small></span><b>{formatMoney(asset.value)}</b><em>{crypto ? ((asset.value / crypto) * 100).toFixed(1) : '0.0'}%</em></button>{open && <div className="asset-breakdown">{details.map(([name, value]) => <div key={name}><span>{name}</span><strong>{formatMoney(value)}</strong><small>{((value / asset.value) * 100).toFixed(1)}%</small></div>)}</div>}</div> })}</div>
+                  <div className="asset-rows digital-rows">{cryptoExposure.map((asset) => {
+                    const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
+                    const open = expandedDigital === asset.symbol
+                    const pnl = asset.pricedValue - asset.pricedCost
+                    const hasCost = asset.pricedQuantity > 0
+                    return <div className={`expandable-asset ${open ? 'open' : ''}`} key={asset.symbol}>
+                      <button onClick={() => setExpandedDigital(open ? null : asset.symbol)}><ChevronRight size={13} /><span className="symbol-cell"><strong>{asset.symbol}</strong><small>{details.slice(0, 2).map(([name, detail]) => `${name} ${((detail.value / asset.value) * 100).toFixed(0)}%`).join(' · ')}{details.length > 2 ? ` +${details.length - 2}` : ''}</small></span><b>{formatMoney(asset.value)}</b><span className={hasCost ? (pnl >= 0 ? 'asset-pnl value-positive' : 'asset-pnl value-negative') : 'asset-pnl'}>{hasCost ? `${pnl >= 0 ? '+' : ''}${formatMoney(pnl)}` : 'Cost pending'}</span><em>{crypto ? ((asset.value / crypto) * 100).toFixed(1) : '0.0'}%</em></button>
+                      {open && <div className="asset-breakdown digital-breakdown">{details.map(([name, detail]) => { const detailPnl = detail.pricedValue - detail.costBasis; const detailHasCost = detail.pricedQuantity > 0; return <div key={name}><span>{name}</span><strong>{formatAmount(detail.quantity)}</strong><small>{detailHasCost ? `Avg ${formatMoney(detail.costBasis / detail.pricedQuantity)}` : 'Average cost pending'}</small><b>{formatMoney(detail.value)}</b><em className={detailHasCost ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detailHasCost ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}</em></div> })}</div>}
+                    </div>
+                  })}</div>
                 </article>
 
                 <article className="panel overview-equities">
                   <div className="panel-heading"><div><p className="eyebrow">STOCKS &amp; ETFS</p><h2>{formatMoney(equities)} total</h2></div><div className="pnl-summary"><small>Total P/L</small><strong className={stockPnl >= 0 ? 'value-positive' : 'value-negative'}>{stockPnl >= 0 ? '+' : ''}{formatMoney(stockPnl)}</strong></div></div>
-                  <div className="equity-columns"><span>Asset / venue split</span><span>Avg buy</span><span>Value</span><span>Allocation</span></div>
-                  <div className="asset-rows equity-rows">{equityExposure.map((asset) => { const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value); const open = expandedEquity === asset.symbol; const averageBuy = asset.pricedQuantity && asset.pricedCost ? asset.pricedCost / asset.pricedQuantity : null; return <div className={`expandable-asset ${open ? 'open' : ''}`} key={asset.symbol}><button onClick={() => setExpandedEquity(open ? null : asset.symbol)}><ChevronRight size={13} /><span className="symbol-cell"><strong>{asset.symbol}</strong><small>{details.map(([name, value]) => `${name} ${((value.value / asset.value) * 100).toFixed(0)}%`).join(' · ')}</small></span><span>{averageBuy == null ? '—' : formatMoney(averageBuy)}</span><b>{formatMoney(asset.value)}</b><em>{equities ? ((asset.value / equities) * 100).toFixed(1) : '0.0'}%</em></button>{open && <div className="asset-breakdown equity-breakdown">{details.map(([name, detail]) => <div key={name}><span>{name}</span><strong>{formatAmount(detail.quantity)} shares</strong><small>{formatMoney(detail.value)} · {detail.costBasis ? `${formatMoney(detail.value - detail.costBasis)} P/L` : 'cost pending'}</small></div>)}</div>}</div> })}</div>
+                  <div className="equity-columns"><span>Asset / venue split</span><span>Avg buy</span><span>Value</span><span>P/L</span><span>Allocation</span></div>
+                  <div className="asset-rows equity-rows">{equityExposure.map((asset) => {
+                    const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
+                    const transactions = brokerageByAsset.get(asset.symbol) || []
+                    const open = expandedEquity === asset.symbol
+                    const averageBuy = asset.pricedQuantity && asset.pricedCost ? asset.pricedCost / asset.pricedQuantity : null
+                    const pnl = asset.pricedValue - asset.pricedCost
+                    const hasCost = asset.pricedQuantity > 0
+                    return <div className={`expandable-asset ${open ? 'open' : ''}`} key={asset.symbol}>
+                      <button onClick={() => setExpandedEquity(open ? null : asset.symbol)}><ChevronRight size={13} /><span className="symbol-cell"><strong>{asset.symbol}</strong><small>{details.map(([name, value]) => `${name} ${((value.value / asset.value) * 100).toFixed(0)}%`).join(' · ')}</small></span><span>{averageBuy == null ? '—' : formatMoney(averageBuy)}</span><b>{formatMoney(asset.value)}</b><span className={hasCost ? (pnl >= 0 ? 'asset-pnl value-positive' : 'asset-pnl value-negative') : 'asset-pnl'}>{hasCost ? `${pnl >= 0 ? '+' : ''}${formatMoney(pnl)}` : '—'}</span><em>{equities ? ((asset.value / equities) * 100).toFixed(1) : '0.0'}%</em></button>
+                      {open && <div className="equity-detail"><div className="asset-breakdown equity-breakdown">{details.map(([name, detail]) => { const detailPnl = detail.value - detail.costBasis; return <div key={name}><span>{name}</span><strong>{formatAmount(detail.quantity)} shares</strong><small>{detail.costBasis ? `Avg ${formatMoney(detail.costBasis / detail.quantity)}` : 'Average cost pending'}</small><b>{formatMoney(detail.value)}</b><em className={detail.costBasis ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detail.costBasis ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}</em></div> })}</div><div className="transaction-history"><div><strong>Transaction history</strong><small>{transactions.length ? `${transactions.length} XTB records` : 'No trade-level history imported'}</small></div>{transactions.length ? transactions.slice(0, 10).map((transaction) => <section key={transaction.id}><time>{new Date(transaction.event_time).toLocaleDateString()}</time><span><strong>{transaction.account?.institution || 'XTB'} · {transaction.event_type}</strong><small>{transaction.quantity ? `${formatAmount(Number(transaction.quantity))} @ ${transaction.price_usd ? formatMoney(Number(transaction.price_usd)) : '—'}` : 'Cash operation'}</small></span><b>{transaction.amount_usd == null ? '—' : formatMoney(Number(transaction.amount_usd))}</b>{transaction.realized_pnl_usd == null ? <em>—</em> : <em className={Number(transaction.realized_pnl_usd) >= 0 ? 'value-positive' : 'value-negative'}>{Number(transaction.realized_pnl_usd) >= 0 ? '+' : ''}{formatMoney(Number(transaction.realized_pnl_usd))}</em>}</section>) : <p>Wio supplies current shares and cost basis, but its screenshots do not contain the individual buy/sell ledger.</p>}</div></div>}
+                    </div>
+                  })}</div>
                   <div className="equity-footer"><span>{equityExposure.length} securities · {formatMoney(stockCostBasis)} known cost</span><span>{brokerageTransactions.length ? `${formatMoney(realizedXtb)} XTB realized` : 'Realized P/L unavailable'}</span></div>
                 </article>
 
