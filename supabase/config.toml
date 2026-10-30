@@ -1,0 +1,6 @@
+project_id = "portfolio"
+
+[auth]
+site_url = "https://harsh-98.github.io/portfolio/"
+additional_redirect_urls = ["http://localhost:5173/portfolio/"]
+enable_signup = true
