@@ -8,6 +8,7 @@ import {
   ArrowUpRight,
   BarChart3,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Coins,
   Layers3,
@@ -89,6 +90,7 @@ const classMeta: Record<AssetClass, { label: string; color: string }> = {
 }
 
 type View = 'overview' | 'crypto' | 'holdings' | 'activity'
+type OverviewPanel = 'platforms' | 'allocation' | 'digital' | 'equities' | 'spending'
 
 const money = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -400,6 +402,8 @@ function Dashboard({ session }: { session: Session }) {
   const [selectedAllocation, setSelectedAllocation] = useState<AssetClass | null>(null)
   const [selectedBrokerDetail, setSelectedBrokerDetail] = useState<{ symbol: string; venue: string } | null>(null)
   const [brokerFullscreen, setBrokerFullscreen] = useState(false)
+  const [expandedPanel, setExpandedPanel] = useState<OverviewPanel | null>(null)
+  const [spendMonth, setSpendMonth] = useState(new Date().toISOString().slice(0, 7))
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -537,11 +541,11 @@ function Dashboard({ session }: { session: Session }) {
     allocation: equities ? (asset.value / equities) * 100 : 0,
   })), [equities, equityExposure])
   const equityColumns = useMemo<ColDef<EquityGridRow>[]>(() => [
-    { field: 'symbol', headerName: 'Asset / venue', minWidth: 155, flex: 1, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
-    { field: 'averageBuy', headerName: 'Avg buy', minWidth: 85, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
-    { field: 'value', headerName: 'Value', minWidth: 95, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
-    { field: 'pnl', headerName: 'P/L', minWidth: 95, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
-    { field: 'allocation', headerName: 'Alloc.', minWidth: 76, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
+    { field: 'symbol', headerName: 'Asset / venue', minWidth: 125, flex: 2.1, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
+    { field: 'averageBuy', headerName: 'Avg buy', minWidth: 68, flex: 1, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
+    { field: 'value', headerName: 'Value', minWidth: 72, flex: 1, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
+    { field: 'pnl', headerName: 'P/L', minWidth: 72, flex: 1, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
+    { field: 'allocation', headerName: 'Alloc.', minWidth: 55, flex: .7, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
   ], [])
   const brokerageByAsset = useMemo(() => {
     const grouped = new Map<string, BrokerageTransaction[]>()
@@ -605,11 +609,15 @@ function Dashboard({ session }: { session: Session }) {
     ? [...latestCryptoPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, start: firstCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
     : []
   const realizedXtb = brokerageTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
-  const etherfiBalances = positions.filter((position) => /ether\.?fi/i.test(`${position.account.name} ${position.account.institution}`)).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
-  const etherfiBalanceTotal = etherfiBalances.reduce((sum, position) => sum + Number(position.value_usd), 0)
-  const recentEtherfiActivity = spendTransactions.filter((transaction) => transaction.source === 'ether.fi' && new Date(transaction.occurred_at).getTime() >= Date.now() - 30 * 86_400_000 && String(transaction.status).trim().toLowerCase() === 'cleared')
-  const recentPurchases = recentEtherfiActivity.filter((transaction) => transaction.transaction_type === 'purchase')
-  const recentRefunds = recentEtherfiActivity.filter((transaction) => transaction.transaction_type === 'refund')
+  const cardBalances = positions.filter((position) => /ether\.?fi|kast|ethena/i.test(`${position.account.name} ${position.account.institution}`)).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
+  const cardBalanceTotal = cardBalances.reduce((sum, position) => sum + Number(position.value_usd), 0)
+  const spendMonths = [...new Set(spendTransactions.map((transaction) => transaction.occurred_at.slice(0, 7)))].sort()
+  const minSpendMonth = spendMonths[0] || spendMonth
+  const maxSpendMonth = spendMonths[spendMonths.length - 1] || spendMonth
+  const selectedMonthLabel = new Date(`${spendMonth}-01T00:00:00Z`).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
+  const selectedCardActivity = spendTransactions.filter((transaction) => ['ether.fi', 'kast', 'ethena'].includes(transaction.source) && transaction.occurred_at.slice(0, 7) === spendMonth && String(transaction.status).trim().toLowerCase() === 'cleared')
+  const recentPurchases = selectedCardActivity.filter((transaction) => transaction.transaction_type === 'purchase')
+  const recentRefunds = selectedCardActivity.filter((transaction) => transaction.transaction_type === 'refund')
   const recentSpendTotal = recentPurchases.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
   const recentRefundTotal = recentRefunds.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
   const latestSnapshot = snapshots.length ? snapshots[snapshots.length - 1] : null
@@ -665,6 +673,16 @@ function Dashboard({ session }: { session: Session }) {
     setMobileNav(false)
   }
 
+  function shiftSpendMonth(delta: number) {
+    const [year, month] = spendMonth.split('-').map(Number)
+    const next = new Date(Date.UTC(year, month - 1 + delta, 1)).toISOString().slice(0, 7)
+    if (next >= minSpendMonth && next <= maxSpendMonth) setSpendMonth(next)
+  }
+
+  function overviewPanelClass(panel: OverviewPanel, base: string) {
+    return `panel ${base} ${expandedPanel === panel ? 'panel-expanded' : ''}`
+  }
+
   return (
     <div className="app-shell">
       <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
@@ -707,13 +725,13 @@ function Dashboard({ session }: { session: Session }) {
               </div>
 
               <div className="overview-grid">
-                <article className="panel overview-platforms">
-                  <div className="panel-heading"><div><p className="eyebrow">BY PLATFORM / ADDRESS</p><h2>Portfolio network</h2></div><span>{platformTotals.length}</span></div>
+                <article className={overviewPanelClass('platforms', 'overview-platforms')}>
+                  <div className="panel-heading"><div><p className="eyebrow">BY PLATFORM / ADDRESS</p><h2>Portfolio network</h2></div><div className="panel-heading-actions"><span className="panel-badge">{platformTotals.length}</span><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'platforms' ? null : 'platforms')} aria-label="Expand portfolio network">{expandedPanel === 'platforms' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className="platform-list">{platformTotals.map((source) => <div key={source.name}><span><strong>{source.name}</strong><small>{total ? ((source.value / total) * 100).toFixed(1) : '0.0'}%</small></span><b>{formatMoney(source.value)}</b></div>)}</div>
                 </article>
 
-                <article className="panel overview-allocation">
-                  <div className="panel-heading"><div><p className="eyebrow">ASSET ALLOCATION</p><h2>Where the wealth sits</h2></div></div>
+                <article className={overviewPanelClass('allocation', 'overview-allocation')}>
+                  <div className="panel-heading"><div><p className="eyebrow">ASSET ALLOCATION</p><h2>Where the wealth sits</h2></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'allocation' ? null : 'allocation')} aria-label="Expand asset allocation">{expandedPanel === 'allocation' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div>
                   <div className="allocation-visual">
                     <div className="allocation-pie interactive-pie"><svg viewBox="0 0 42 42" aria-label="Interactive asset allocation">{allocationArcs.map((item) => <circle key={item.key} cx="21" cy="21" r="15.9155" fill="none" stroke={item.color} strokeWidth="9" pathLength="100" strokeDasharray={`${item.percent} ${100 - item.percent}`} strokeDashoffset={item.offset} role="button" tabIndex={0} aria-label={`${item.label}, ${item.percent.toFixed(1)} percent`} onClick={() => setSelectedAllocation(item.key as AssetClass)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setSelectedAllocation(item.key as AssetClass) }} />)}</svg><span><strong>{allocation.length}</strong>classes</span></div>
                     <div className="allocation-legend">{allocation.map((item) => <button key={item.key} onClick={() => setSelectedAllocation(item.key as AssetClass)}><span><i style={{ background: item.color }} />{item.label}</span><strong>{total ? ((item.value / total) * 100).toFixed(1) : '0.0'}%</strong><small>{formatMoney(item.value)}</small></button>)}</div>
@@ -721,8 +739,8 @@ function Dashboard({ session }: { session: Session }) {
                   {selectedAllocation && selectedAllocationItem && <div className="allocation-drilldown"><div className="drilldown-head"><span><i style={{ background: selectedAllocationItem.color }} /><strong>{selectedAllocationItem.label}</strong><small>{formatMoney(selectedAllocationItem.value)}</small></span><button onClick={() => setSelectedAllocation(null)} aria-label="Close allocation detail"><X size={14} /></button></div><p>Spread across platforms and addresses</p><div>{selectedAllocationPlatforms.map(([platform, value]) => <section key={platform}><span>{platform}</span><strong>{formatMoney(value)}</strong><small>{((value / selectedAllocationItem.value) * 100).toFixed(1)}%</small></section>)}</div></div>}
                 </article>
 
-                <article className="panel overview-digital">
-                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>Digital assets</h2></div><span>{cryptoExposure.length} assets</span></div>
+                <article className={overviewPanelClass('digital', 'overview-digital')}>
+                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>Digital assets</h2></div><div className="panel-heading-actions"><span className="panel-badge">{cryptoExposure.length} assets</span><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className="asset-rows digital-rows">{cryptoExposure.map((asset) => {
                     const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
                     const open = expandedDigital === asset.symbol
@@ -735,20 +753,21 @@ function Dashboard({ session }: { session: Session }) {
                   })}</div>
                 </article>
 
-                <article className="panel overview-equities">
-                  <div className="panel-heading"><div><p className="eyebrow">STOCKS &amp; ETFS</p><h2>{formatMoney(equities)} total</h2></div><div className="pnl-summary"><small>Total P/L</small><strong className={stockPnl >= 0 ? 'value-positive' : 'value-negative'}>{stockPnl >= 0 ? '+' : ''}{formatMoney(stockPnl)}</strong></div></div>
-                  <div className="equity-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={equityGridRows} columnDefs={equityColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} getRowId={({ data }) => data.symbol} rowHeight={34} headerHeight={28} floatingFiltersHeight={25} onRowClicked={({ data }) => data && setExpandedEquity(data.symbol)} /></div>
-                  <div className="equity-footer"><span>{equityExposure.length} securities · {formatMoney(stockCostBasis)} known cost</span><span>{brokerageTransactions.length ? `${formatMoney(realizedXtb)} XTB realized` : 'Realized P/L unavailable'}</span></div>
+                <article className={overviewPanelClass('equities', 'overview-equities')}>
+                  <div className="panel-heading"><div><p className="eyebrow">STOCKS &amp; ETFS</p><h2>{formatMoney(equities)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={stockPnl >= 0 ? 'value-positive' : 'value-negative'}>{stockPnl >= 0 ? '+' : ''}{formatMoney(stockPnl)}</strong></span><span><small>Realized</small><strong className={realizedXtb >= 0 ? 'value-positive' : 'value-negative'}>{realizedXtb >= 0 ? '+' : ''}{formatMoney(realizedXtb)}</strong></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'equities' ? null : 'equities')} aria-label="Expand stocks and ETFs">{expandedPanel === 'equities' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="equity-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={equityGridRows} columnDefs={equityColumns} defaultColDef={{ sortable: true, resizable: true }} getRowId={({ data }) => data.symbol} rowHeight={34} headerHeight={30} onRowClicked={({ data }) => data && setExpandedEquity(data.symbol)} /></div>
+                  <div className="equity-footer"><span>{equityExposure.length} securities · {formatMoney(stockCostBasis)} known cost</span><span>{brokerageTransactions.length ? 'Realized P/L from XTB history' : 'Realized P/L unavailable'}</span></div>
                   {expandedEquity && (() => { const asset = equityExposure.find((item) => item.symbol === expandedEquity); if (!asset) return null; const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value); return <div className="equity-drilldown"><div className="drilldown-head"><span><i /><strong>{asset.symbol} · {asset.name}</strong><small>Position by platform · choose a venue for transaction history</small></span><button onClick={() => setExpandedEquity(null)} aria-label="Close position detail"><X size={14} /></button></div><div className="asset-breakdown equity-breakdown">{details.map(([name, detail]) => { const detailPnl = detail.value - detail.costBasis; const venueTransactions = (brokerageByAsset.get(asset.symbol) || []).filter((transaction) => transaction.account && platformIdentity(transaction.account) === name); return <button key={name} onClick={() => venueTransactions.length && setSelectedBrokerDetail({ symbol: asset.symbol, venue: name })} disabled={!venueTransactions.length}><span>{name}<small>{venueTransactions.length ? `${venueTransactions.length} transactions · click to open` : 'Position detail only'}</small></span><strong>{formatAmount(detail.quantity)} shares</strong><small>{detail.costBasis ? `Avg ${formatMoneyCents(detail.costBasis / detail.quantity)}` : 'Average cost pending'}</small><b>{formatMoney(detail.value)}</b><em className={detail.costBasis ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detail.costBasis ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}</em><ChevronRight size={12} /></button> })}</div></div> })()}
                   {selectedBrokerDetail && <div className={`broker-drilldown ${brokerFullscreen ? 'fullscreen' : ''}`}><div className="drilldown-head"><span><i /><strong>{selectedBrokerDetail.symbol} · {selectedBrokerDetail.venue}</strong><small>{selectedBrokerTransactions.length} records · sort any column or use the filters</small></span><div className="drilldown-actions"><button onClick={() => setBrokerFullscreen((value) => !value)} aria-label={brokerFullscreen ? 'Exit full screen' : 'Maximize transaction history'} title={brokerFullscreen ? 'Exit full screen' : 'Maximize'}>{brokerFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button><button onClick={() => { setSelectedBrokerDetail(null); setBrokerFullscreen(false) }} aria-label="Close transaction history"><X size={14} /></button></div></div><div className="broker-grid"><AgGridReact<TransactionGridRow> theme={portfolioGridTheme} rowData={transactionGridRows} columnDefs={transactionColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} getRowId={({ data }) => data.id} rowHeight={34} headerHeight={31} floatingFiltersHeight={29} /></div></div>}
                 </article>
 
-                <aside className="panel overview-spending">
-                  <div className="panel-heading"><div><p className="eyebrow">ETHER.FI · LAST 30 DAYS</p><h2>Card &amp; balances</h2></div><span>{formatMoney(etherfiBalanceTotal)}</span></div>
-                  <div className="card-activity-summary"><div><span>Balance</span><strong>{formatMoneyCents(etherfiBalanceTotal)}</strong></div><div><span>Cleared spend</span><strong>{formatMoneyCents(recentSpendTotal)}</strong></div><div><span>Refunds</span><strong className="value-positive">+{formatMoneyCents(recentRefundTotal)}</strong></div></div>
-                  <div className="spend-section"><div className="spend-section-title"><span>Balances</span><small>{etherfiBalances.length}</small></div><div className="balance-list">{etherfiBalances.map((position) => <div key={position.id}><span><strong>{position.asset.symbol}</strong><small>{position.account.name}</small></span><b>{formatMoney(Number(position.value_usd))}</b></div>)}</div></div>
-                  <div className="spend-section activity-section"><div className="spend-section-title"><span>Cleared spending</span><small>{recentPurchases.length}</small></div><div className="recent-spend-list">{recentPurchases.slice(0, 6).map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card transaction'}</strong><small>{new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b>{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentPurchases.length && <p className="activity-empty">No cleared spending in this period.</p>}</div></div>
-                  <div className="spend-section activity-section refund-section"><div className="spend-section-title"><span>Refunds</span><small>{recentRefunds.length}</small></div><div className="recent-spend-list">{recentRefunds.slice(0, 5).map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card refund'}</strong><small>{new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentRefunds.length && <p className="activity-empty">No refunds in this period.</p>}</div></div>
+                <aside className={overviewPanelClass('spending', 'overview-spending')}>
+                  <div className="panel-heading"><div><p className="eyebrow">CARD ACCOUNTS</p><h2>Balances &amp; activity</h2></div><div className="panel-heading-actions"><span className="panel-badge">{formatMoney(cardBalanceTotal)}</span><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'spending' ? null : 'spending')} aria-label="Expand card activity">{expandedPanel === 'spending' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="month-selector"><button onClick={() => shiftSpendMonth(-1)} disabled={spendMonth <= minSpendMonth} aria-label="Previous month"><ChevronLeft size={13} /></button><strong>{selectedMonthLabel}</strong><button onClick={() => shiftSpendMonth(1)} disabled={spendMonth >= maxSpendMonth} aria-label="Next month"><ChevronRight size={13} /></button></div>
+                  <div className="card-activity-summary"><div><span>Current balance</span><strong>{formatMoneyCents(cardBalanceTotal)}</strong></div><div><span>Cleared spend</span><strong>{formatMoneyCents(recentSpendTotal)}</strong></div><div><span>Refunds</span><strong className="value-positive">+{formatMoneyCents(recentRefundTotal)}</strong></div></div>
+                  <div className="spend-section"><div className="spend-section-title"><span>Balances</span><small>{cardBalances.length}</small></div><div className="balance-list">{cardBalances.map((position) => <div key={position.id}><span><strong>{position.asset.symbol}</strong><small>{position.account.name}</small></span><b>{formatMoney(Number(position.value_usd))}</b></div>)}</div></div>
+                  <div className="spend-section activity-section"><div className="spend-section-title"><span>Cleared spending</span><small>{recentPurchases.length}</small></div><div className="recent-spend-list">{recentPurchases.map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card transaction'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b>{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentPurchases.length && <p className="activity-empty">No data for this month.</p>}</div></div>
+                  <div className="spend-section activity-section refund-section"><div className="spend-section-title"><span>Refunds</span><small>{recentRefunds.length}</small></div><div className="recent-spend-list">{recentRefunds.map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card refund'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentRefunds.length && <p className="activity-empty">No data for this month.</p>}</div></div>
                 </aside>
               </div>
             </section>

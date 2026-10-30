@@ -228,8 +228,16 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 
 .overview-grid { min-height: 0; display: grid; grid-template-columns: minmax(245px, 30fr) minmax(420px, 45fr) minmax(240px, 25fr); grid-template-rows: minmax(0, .9fr) minmax(0, 1.1fr); gap: 8px; }
 .overview-grid > .panel { padding: 12px; border-radius: 8px; overflow: hidden; }
+.overview-grid > .panel.panel-expanded { position: fixed; inset: 14px; z-index: 90; width: auto; height: auto; display: flex; flex-direction: column; padding: 18px; border-color: #344149; border-radius: 10px; background: #0f1519; box-shadow: 0 24px 90px rgba(0,0,0,.78); }
 .overview-grid .panel-heading { margin-bottom: 8px; }
 .overview-grid .panel-heading h2 { font-size: 17px; }
+.panel-heading-actions { display: flex; align-items: center; gap: 7px; }
+.panel-badge { white-space: nowrap; padding: 4px 7px; color: #80ab96; background: #16251e; border-radius: 5px; font: 8px 'DM Mono', monospace; text-transform: uppercase; }
+.panel-heading .panel-expand-button { width: 25px; height: 25px; display: grid; place-items: center; padding: 0; border: 1px solid #29333a; border-radius: 6px; background: #13191e; color: #87939a; }
+.panel-heading .panel-expand-button:hover { color: #dce4e7; border-color: #3b4952; }
+.panel-expanded .platform-list { flex: 1; overflow-y: auto; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.panel-expanded .allocation-visual { flex: 1; height: auto; grid-template-columns: minmax(240px, .8fr) minmax(300px, 1.2fr); }
+.panel-expanded .allocation-pie { width: min(32vh, 320px); }
 .overview-platforms { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; }
 .overview-allocation { grid-column: 1; grid-row: 2; }
 .overview-digital { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; }
@@ -300,6 +308,10 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .pnl-summary { display: grid; gap: 1px; text-align: right; }
 .pnl-summary small { color: #66727a; font-size: 7px; }
 .pnl-summary strong { font-size: 10px; }
+.equity-pnl-strip { display: flex; align-items: center; gap: 10px; text-align: right; }
+.equity-pnl-strip > span { display: grid; gap: 1px; }
+.equity-pnl-strip small { color: #66727a; font-size: 6px; text-transform: uppercase; letter-spacing: .04em; }
+.equity-pnl-strip strong { font-size: 9px; }
 .digital-rows .expandable-asset > button { grid-template-columns: 13px minmax(120px, 1fr) 62px 64px 42px; }
 .digital-breakdown { margin-left: 21px; }
 .digital-breakdown > div { grid-template-columns: minmax(70px, 1fr) 70px 90px 60px 58px; align-items: center; }
@@ -363,7 +375,11 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .grid-pnl-positive { color: var(--green); font-weight: 600; }
 .grid-pnl-negative { color: var(--red); font-weight: 600; }
 
-.overview-spending .panel-heading > span { color: #d6dfda; background: #18231e; }
+.overview-spending .panel-badge { color: #d6dfda; background: #18231e; }
+.month-selector { display: grid; grid-template-columns: 26px 1fr 26px; align-items: center; gap: 5px; margin-bottom: 7px; }
+.month-selector button { width: 26px; height: 24px; display: grid; place-items: center; padding: 0; border: 1px solid #263038; border-radius: 5px; background: #11171c; color: #859198; }
+.month-selector button:disabled { cursor: default; opacity: .3; }
+.month-selector strong { color: #bfc8cc; font: 500 8px 'DM Mono', monospace; text-align: center; text-transform: uppercase; letter-spacing: .05em; }
 .card-activity-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-bottom: 8px; }
 .card-activity-summary > div { min-width: 0; display: grid; gap: 2px; padding: 7px; border: 1px solid #20292f; border-radius: 6px; background: #0d1216; }
 .card-activity-summary span { color: #647079; font-size: 6px; text-transform: uppercase; letter-spacing: .06em; }
@@ -377,7 +393,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .balance-list small { color: #5f6b73; font-size: 6px; }
 .balance-list b { color: #e8edef; font-size: 9px; }
 .activity-section { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.activity-section .recent-spend-list { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2a353c transparent; }
+.activity-section .recent-spend-list { min-height: 0; flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2a353c transparent; }
 .refund-section { flex: .75; }
 .activity-empty { margin: 10px 0; color: #536068; font-size: 7px; text-align: center; }
 .spend-source-list { display: grid; grid-template-columns: 1fr; }

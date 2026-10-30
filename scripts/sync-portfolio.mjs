@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import pdfParse from "pdf-parse/lib/pdf-parse.js";
 
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run");
@@ -344,6 +345,65 @@ async function loadEtherfiSpend(csvPath) {
   }).filter((row) => Number.isFinite(new Date(row.occurred_at).getTime()) && row.external_ref);
 }
 
+async function parseKastStatement(pdfPath) {
+  const pages = [];
+  await pdfParse(await fs.readFile(pdfPath), {
+    pagerender: (page) => page.getTextContent({ normalizeWhitespace: true, disableCombineTextItems: false }).then((content) => {
+      pages.push(content.items.map((item) => ({ text: String(item.str).trim(), x: item.transform[4], y: item.transform[5] })).filter((item) => item.text));
+      return "";
+    }),
+  });
+  const transactions = [];
+  const amountAt = (items, minX, maxX) => {
+    const item = items.find((candidate) => candidate.x >= minX && candidate.x < maxX && /^-?[\d,]+\.\d{2}$/.test(candidate.text));
+    return item ? number(item.text) : null;
+  };
+  for (const items of pages) {
+    const dates = items.filter((item) => item.x < 90 && /^\d{2} [A-Z][a-z]{2} \d{4}$/.test(item.text)).sort((a, b) => b.y - a.y);
+    for (let index = 0; index < dates.length; index += 1) {
+      const date = dates[index];
+      const nextY = dates[index + 1]?.y ?? date.y - 100;
+      const sameLine = items.filter((item) => Math.abs(item.y - date.y) < 1.5);
+      const detailItems = items.filter((item) => item.y <= date.y + 1.5 && item.y > nextY + 1.5 && item.x >= 90 && item.x < 350).sort((a, b) => b.y - a.y || a.x - b.x);
+      const description = sameLine.filter((item) => item.x >= 90 && item.x < 350).sort((a, b) => a.x - b.x).map((item) => item.text).join("").replace(/\s+/g, " ").trim();
+      const details = detailItems.map((item) => item.text).join(" ");
+      const transactionId = details.match(/Transaction ID\s*:\s*([a-zA-Z0-9-]+)/)?.[1];
+      const cardLastFour = details.match(/\*(\d{4})/)?.[1] ?? null;
+      const moneyIn = amountAt(sameLine, 350, 425);
+      const moneyOut = amountAt(sameLine, 425, 505);
+      const balanceAfter = amountAt(sameLine, 505, 590);
+      if (moneyIn == null && moneyOut == null) continue;
+      const isRefund = moneyIn != null && Boolean(cardLastFour);
+      const isPurchase = moneyOut != null && Boolean(cardLastFour);
+      const transactionType = isRefund ? "refund" : isPurchase ? "purchase" : moneyIn != null ? "transfer_in" : "transfer";
+      const amountUsd = isRefund ? -moneyIn : moneyOut ?? moneyIn ?? 0;
+      const occurredAt = new Date(`${date.text} 12:00:00 GMT+0530`).toISOString();
+      transactions.push({
+        source: "kast",
+        external_ref: `kast:${transactionId || hash([occurredAt, description, moneyIn, moneyOut, balanceAfter].join("|"))}:${moneyIn != null ? "in" : "out"}`,
+        occurred_at: occurredAt,
+        merchant: description || null,
+        description: transactionType.replaceAll("_", " "),
+        status: "cleared",
+        transaction_type: transactionType,
+        original_amount: Math.abs(amountUsd),
+        original_currency: "USD",
+        amount_usd: round(amountUsd),
+        category: null,
+        card_last_four: cardLastFour,
+        metadata: { import_file: path.basename(pdfPath), transaction_id: transactionId || null, balance_after_usd: balanceAfter },
+      });
+    }
+  }
+  return transactions;
+}
+
+async function loadKastSpend(pdfPaths) {
+  const transactions = [];
+  for (const pdfPath of pdfPaths) transactions.push(...await parseKastStatement(pdfPath));
+  return transactions;
+}
+
 async function loadXtb(sourcePath) {
   return withXlsxFromArchive(sourcePath, async (xlsxPath) => {
     const sheets = parseXlsxRows(xlsxPath);
@@ -429,6 +489,16 @@ function summarize(sourcePositions) {
   }]));
 }
 
+function summarizeSpend(transactions) {
+  const byType = {};
+  const months = new Set();
+  for (const transaction of transactions) {
+    byType[transaction.transaction_type] = (byType[transaction.transaction_type] ?? 0) + 1;
+    months.add(transaction.occurred_at.slice(0, 7));
+  }
+  return { records: transactions.length, by_type: byType, months: [...months].sort() };
+}
+
 const portfolioSources = ["rabby", "binance", "wio", "wio-stocks", "xtb"];
 const needsPortfolioSync = !only || portfolioSources.some((source) => only.has(source));
 const fx = needsPortfolioSync ? await loadFx() : {};
@@ -436,6 +506,7 @@ const sourcePositions = {};
 const sourceErrors = {};
 let xtbTransactions = [];
 let etherfiSpendTransactions = [];
+let kastSpendTransactions = [];
 async function captureSource(source, loader) {
   try { return await loader(); }
   catch (error) {
@@ -470,9 +541,16 @@ if (shouldRun("etherfi") && process.env.ETHERFI_CSV_PATH?.trim()) {
   const result = await captureSource("etherfi", () => loadEtherfiSpend(process.env.ETHERFI_CSV_PATH.trim()));
   if (result) etherfiSpendTransactions = result;
 }
+if (shouldRun("kast") && (process.env.KAST_PDF_PATHS?.trim() || process.env.KAST_PDF_DIR?.trim())) {
+  const kastPaths = process.env.KAST_PDF_PATHS?.trim()
+    ? process.env.KAST_PDF_PATHS.split(path.delimiter).filter(Boolean)
+    : (await fs.readdir(process.env.KAST_PDF_DIR.trim())).filter((name) => name.toLowerCase().endsWith(".pdf")).sort().map((name) => path.join(process.env.KAST_PDF_DIR.trim(), name));
+  const result = await captureSource("kast", () => loadKastSpend(kastPaths));
+  if (result) kastSpendTransactions = result;
+}
 
 if (dryRun) {
-  console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length }, null, 2));
+  console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length, kast_spend: summarizeSpend(kastSpendTransactions) }, null, 2));
   process.exit(0);
 }
 
@@ -591,8 +669,15 @@ if (etherfiSpendTransactions.length) {
   }
 }
 
+if (kastSpendTransactions.length) {
+  const rows = kastSpendTransactions.map((transaction) => ({ owner_id: ownerId, ...transaction }));
+  for (let index = 0; index < rows.length; index += 100) {
+    await supabase("/rest/v1/spend_transactions?on_conflict=owner_id,source,external_ref", { method: "POST", body: rows.slice(index, index + 100), prefer: "resolution=merge-duplicates,return=minimal" });
+  }
+}
+
 if (!needsPortfolioSync) {
-  console.log(JSON.stringify({ as_of: now, source_errors: sourceErrors, etherfi_spend_records: etherfiSpendTransactions.length }, null, 2));
+  console.log(JSON.stringify({ as_of: now, source_errors: sourceErrors, etherfi_spend_records: etherfiSpendTransactions.length, kast_spend_records: kastSpendTransactions.length }, null, 2));
   process.exit(0);
 }
 
@@ -644,4 +729,4 @@ const currentSnapshotKeys = new Set(positionSnapshots.map((position) => position
 for (const stale of existingSnapshots.filter((position) => !currentSnapshotKeys.has(position.source_key))) {
   await supabase(`/rest/v1/position_snapshots?id=eq.${stale.id}`, { method: "DELETE" });
 }
-console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length, snapshot_positions: positionSnapshots.length, portfolio: totals }, null, 2));
+console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length, kast_spend_records: kastSpendTransactions.length, snapshot_positions: positionSnapshots.length, portfolio: totals }, null, 2));
