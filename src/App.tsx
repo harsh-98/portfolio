@@ -1,5 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
+import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef } from 'ag-grid-community'
+import { AgGridReact } from 'ag-grid-react'
 import {
   Activity,
   ArrowDownRight,
@@ -20,6 +22,47 @@ import {
 } from 'lucide-react'
 import { isConfigured, supabase } from './lib/supabase'
 import type { Account, AssetClass, BrokerageTransaction, Position, PositionSnapshot, Snapshot, SpendTransaction, SyncRun } from './types'
+
+ModuleRegistry.registerModules([AllCommunityModule])
+
+const portfolioGridTheme = themeQuartz.withParams({
+  accentColor: '#68d3a0',
+  backgroundColor: '#0d1216',
+  borderColor: '#242c33',
+  browserColorScheme: 'dark',
+  foregroundColor: '#cbd3d7',
+  headerBackgroundColor: '#11171c',
+  headerTextColor: '#78858d',
+  oddRowBackgroundColor: '#0f1418',
+  rowHoverColor: '#151c21',
+  fontFamily: 'Manrope, sans-serif',
+  fontSize: 10,
+})
+
+type HoldingGridRow = {
+  id: string
+  asset: string
+  name: string
+  account: string
+  institution: string
+  assetClass: string
+  quantity: number
+  price: number
+  value: number
+  pnl: number | null
+  weight: number
+}
+
+type TransactionGridRow = {
+  id: string
+  eventTime: Date
+  eventType: string
+  asset: string
+  quantity: number | null
+  price: number | null
+  amount: number | null
+  realizedPnl: number | null
+}
 
 const classMeta: Record<AssetClass, { label: string; color: string }> = {
   cash: { label: 'Cash', color: '#2f7d64' },
@@ -472,6 +515,25 @@ function Dashboard({ session }: { session: Session }) {
   const selectedBrokerTransactions = selectedBrokerDetail
     ? (brokerageByAsset.get(selectedBrokerDetail.symbol) || []).filter((transaction) => transaction.account && platformIdentity(transaction.account) === selectedBrokerDetail.venue)
     : []
+  const transactionGridRows = useMemo<TransactionGridRow[]>(() => selectedBrokerTransactions.map((transaction) => ({
+    id: transaction.id,
+    eventTime: new Date(transaction.event_time),
+    eventType: transaction.event_type,
+    asset: transaction.asset?.name || transaction.asset?.symbol || selectedBrokerDetail?.symbol || '',
+    quantity: transaction.quantity == null ? null : Number(transaction.quantity),
+    price: transaction.price_usd == null ? null : Number(transaction.price_usd),
+    amount: transaction.amount_usd == null ? null : Number(transaction.amount_usd),
+    realizedPnl: transaction.realized_pnl_usd == null ? null : Number(transaction.realized_pnl_usd),
+  })), [selectedBrokerDetail, selectedBrokerTransactions])
+  const transactionColumns = useMemo<ColDef<TransactionGridRow>[]>(() => [
+    { field: 'eventTime', headerName: 'Date', minWidth: 105, sort: 'desc', filter: 'agDateColumnFilter', valueFormatter: ({ value }) => value instanceof Date ? value.toLocaleDateString() : '—' },
+    { field: 'eventType', headerName: 'Transaction', minWidth: 125, filter: 'agTextColumnFilter' },
+    { field: 'asset', headerName: 'Asset', minWidth: 150, flex: 1, filter: 'agTextColumnFilter' },
+    { field: 'quantity', headerName: 'Quantity', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatAmount(Number(value)) },
+    { field: 'price', headerName: 'Price', minWidth: 100, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoney(Number(value)) },
+    { field: 'amount', headerName: 'Amount', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoney(Number(value)) },
+    { field: 'realizedPnl', headerName: 'Realized P/L', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
+  ], [])
   const cryptoHistory = useMemo(() => {
     const grouped = new Map<string, { date: string; total: number; platforms: Map<string, number> }>()
     positionSnapshots.forEach((snapshot) => {
@@ -519,6 +581,33 @@ function Dashboard({ session }: { session: Session }) {
     const query = search.toLowerCase()
     return [position.asset.symbol, position.asset.name, position.account.name, position.account.institution].some((value) => value.toLowerCase().includes(query))
   })
+  const holdingGridRows = useMemo<HoldingGridRow[]>(() => positions.map((position) => {
+    const value = Number(position.value_usd)
+    const costBasis = position.cost_basis_usd == null ? null : Number(position.cost_basis_usd)
+    return {
+      id: position.id,
+      asset: position.asset.symbol,
+      name: position.asset.name,
+      account: position.account.name,
+      institution: position.account.institution,
+      assetClass: classMeta[position.asset.asset_class].label,
+      quantity: Number(position.quantity),
+      price: Number(position.price_usd),
+      value,
+      pnl: costBasis == null ? null : value - costBasis,
+      weight: total ? (value / total) * 100 : 0,
+    }
+  }), [positions, total])
+  const holdingColumns = useMemo<ColDef<HoldingGridRow>[]>(() => [
+    { field: 'asset', headerName: 'Asset', minWidth: 110, pinned: 'left', filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: HoldingGridRow }) => data ? <span className="grid-asset"><strong>{data.asset}</strong><small>{data.name}</small></span> : null },
+    { field: 'account', headerName: 'Account', minWidth: 170, flex: 1, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: HoldingGridRow }) => data ? <span className="grid-asset"><strong>{data.account}</strong><small>{data.institution}</small></span> : null },
+    { field: 'assetClass', headerName: 'Class', minWidth: 120, filter: 'agTextColumnFilter' },
+    { field: 'quantity', headerName: 'Quantity', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatAmount(Number(value)) },
+    { field: 'price', headerName: 'Price', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
+    { field: 'value', headerName: 'Value', minWidth: 115, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
+    { field: 'pnl', headerName: 'P/L', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
+    { field: 'weight', headerName: 'Weight', minWidth: 100, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(2)}%` },
+  ], [])
 
   const navItems: Array<{ id: View; label: string; icon: typeof BarChart3 }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
@@ -617,7 +706,7 @@ function Dashboard({ session }: { session: Session }) {
                     </div>
                   })}</div>
                   <div className="equity-footer"><span>{equityExposure.length} securities · {formatMoney(stockCostBasis)} known cost</span><span>{brokerageTransactions.length ? `${formatMoney(realizedXtb)} XTB realized` : 'Realized P/L unavailable'}</span></div>
-                  {selectedBrokerDetail && <div className="broker-drilldown"><div className="drilldown-head"><span><i /><strong>{selectedBrokerDetail.symbol} · {selectedBrokerDetail.venue}</strong><small>{selectedBrokerTransactions.length} transaction records</small></span><button onClick={() => setSelectedBrokerDetail(null)} aria-label="Close transaction history"><X size={14} /></button></div><div className="broker-transaction-head"><span>Date</span><span>Transaction</span><span>Quantity / price</span><span>Amount</span><span>Realized P/L</span></div><div className="broker-transaction-list">{selectedBrokerTransactions.map((transaction) => <section key={transaction.id}><time>{new Date(transaction.event_time).toLocaleDateString()}</time><span><strong>{transaction.event_type}</strong><small>{transaction.asset?.name || transaction.asset?.symbol || selectedBrokerDetail.symbol}</small></span><span>{transaction.quantity ? `${formatAmount(Number(transaction.quantity))} @ ${transaction.price_usd ? formatMoney(Number(transaction.price_usd)) : '—'}` : 'Cash operation'}</span><b>{transaction.amount_usd == null ? '—' : formatMoney(Number(transaction.amount_usd))}</b>{transaction.realized_pnl_usd == null ? <em>—</em> : <em className={Number(transaction.realized_pnl_usd) >= 0 ? 'value-positive' : 'value-negative'}>{Number(transaction.realized_pnl_usd) >= 0 ? '+' : ''}{formatMoney(Number(transaction.realized_pnl_usd))}</em>}</section>)}</div></div>}
+                  {selectedBrokerDetail && <div className="broker-drilldown"><div className="drilldown-head"><span><i /><strong>{selectedBrokerDetail.symbol} · {selectedBrokerDetail.venue}</strong><small>{selectedBrokerTransactions.length} records · sort any column or use the filters</small></span><button onClick={() => setSelectedBrokerDetail(null)} aria-label="Close transaction history"><X size={14} /></button></div><div className="broker-grid"><AgGridReact<TransactionGridRow> theme={portfolioGridTheme} rowData={transactionGridRows} columnDefs={transactionColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} getRowId={({ data }) => data.id} rowHeight={34} headerHeight={31} floatingFiltersHeight={29} /></div></div>}
                 </article>
 
                 <aside className="panel overview-spending">
@@ -660,9 +749,9 @@ function Dashboard({ session }: { session: Session }) {
 
           {view === 'holdings' && (
             <section className="panel holdings-panel">
-              <div className="table-tools"><label><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search assets or accounts" /></label><span>{filteredPositions.length} positions</span></div>
+              <div className="table-tools"><label><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search assets or accounts" /></label><span>{filteredPositions.length} positions · click headers to sort</span></div>
               {positions.length ? (
-                <div className="table-scroll"><table><thead><tr><th>Asset</th><th>Account</th><th>Class</th><th>Quantity</th><th>Price</th><th>Value</th><th>Weight</th></tr></thead><tbody>{filteredPositions.map((position) => <tr key={position.id}><td><div className="table-asset"><span className="asset-badge">{position.asset.symbol.slice(0, 3)}</span><div><strong>{position.asset.symbol}</strong><small>{position.asset.name}</small></div></div></td><td><strong>{position.account.name}</strong><small>{position.account.institution}</small></td><td><span className="class-pill"><i style={{ background: classMeta[position.asset.asset_class].color }} />{classMeta[position.asset.asset_class].label}</span></td><td>{formatAmount(position.quantity)}</td><td>{formatMoney(position.price_usd)}</td><td><strong>{formatMoney(position.value_usd)}</strong></td><td>{total ? ((position.value_usd / total) * 100).toFixed(2) : '0.00'}%</td></tr>)}</tbody></table></div>
+                <div className="holdings-grid"><AgGridReact<HoldingGridRow> theme={portfolioGridTheme} rowData={holdingGridRows} columnDefs={holdingColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} quickFilterText={search} getRowId={({ data }) => data.id} rowHeight={42} headerHeight={34} floatingFiltersHeight={31} /></div>
               ) : <EmptyState onAdd={() => setShowHoldingForm(true)} />}
             </section>
           )}
