@@ -168,10 +168,12 @@ async function loadRabby(addresses) {
         const acquisition = receiptStats.get(token.id);
         const estimatedPrice = acquisition?.amount ? acquisition.value / acquisition.amount : null;
         directValue += value;
-        const stable = ["USDT", "USDC", "DAI", "USDE", "FRAX", "LUSD", "GHO"].includes(String(token.symbol).toUpperCase());
+        const tokenSymbol = String(token.symbol).toUpperCase();
+        const stable = ["USDT", "USDC", "DAI", "USDE", "FRAX", "LUSD", "GHO"].includes(tokenSymbol);
+        const preciousMetal = ["XAUT", "XAUT0", "PAXG"].includes(tokenSymbol);
         positions.push({
           account,
-          asset: { symbol: String(token.symbol || token.optimized_symbol || "TOKEN").slice(0, 32).toUpperCase(), name: token.name || token.symbol, asset_class: stable ? "stablecoin" : "crypto", currency: "USD", network: chainId, contract_address: String(token.id), metadata: { rabby_verified: token.is_verified, rabby_core: token.is_core } },
+          asset: { symbol: String(token.symbol || token.optimized_symbol || "TOKEN").slice(0, 32).toUpperCase(), name: token.name || token.symbol, asset_class: stable ? "stablecoin" : preciousMetal ? "gold" : "crypto", currency: "USD", network: chainId, contract_address: String(token.id), metadata: { rabby_verified: token.is_verified, rabby_core: token.is_core } },
           quantity: number(token.amount),
           price_usd: number(token.price),
           value_usd: round(value),
@@ -240,9 +242,10 @@ async function loadBinance(keyFile) {
   return [...quantities.entries()].map(([asset, quantity]) => {
     const price = priceUsd(asset);
     const stable = ["USDT", "USDC", "FDUSD", "DAI", "TUSD"].includes(asset);
+    const preciousMetal = ["XAUT", "XAUT0", "PAXG"].includes(asset);
     return {
       account: { name: "Binance", institution: "Binance", account_type: "exchange", currency: "USD", source: "binance" },
-      asset: { symbol: asset, name: asset, asset_class: stable ? "stablecoin" : "crypto", currency: "USD", network: "binance", contract_address: null, metadata: {} },
+      asset: { symbol: asset, name: asset, asset_class: stable ? "stablecoin" : preciousMetal ? "gold" : "crypto", currency: "USD", network: "binance", contract_address: null, metadata: {} },
       quantity,
       price_usd: price,
       value_usd: round(quantity * price),
@@ -458,10 +461,13 @@ async function ensureAccount(account) {
 async function ensureAsset(asset) {
   const cacheKey = `${asset.symbol}|${asset.network ?? ""}|${asset.contract_address ?? ""}`;
   if (assetCache.has(cacheKey)) return assetCache.get(cacheKey);
-  const query = new URLSearchParams({ owner_id: `eq.${ownerId}`, symbol: `eq.${asset.symbol}`, select: "id,network,contract_address" });
+  const query = new URLSearchParams({ owner_id: `eq.${ownerId}`, symbol: `eq.${asset.symbol}`, select: "id,network,contract_address,asset_class" });
   const candidates = await supabase(`/rest/v1/assets?${query}`);
   const existing = candidates.find((item) => (item.network ?? null) === (asset.network ?? null) && (item.contract_address ?? null) === (asset.contract_address ?? null));
   const id = existing?.id ?? (await supabase("/rest/v1/assets", { method: "POST", body: { owner_id: ownerId, ...asset }, prefer: "return=representation" }))[0].id;
+  if (existing && existing.asset_class !== asset.asset_class) {
+    await supabase(`/rest/v1/assets?id=eq.${existing.id}`, { method: "PATCH", body: { asset_class: asset.asset_class }, prefer: "return=minimal" });
+  }
   assetCache.set(cacheKey, id);
   return id;
 }

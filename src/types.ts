@@ -34,9 +34,14 @@ export interface Position {
 }
 
 export interface PositionSnapshot {
+  id?: string
   snapshot_date: string
   source_key: string
+  quantity?: number
+  price_usd?: number
   value_usd: number
+  account?: Pick<Account, 'name' | 'institution'> | null
+  asset?: Pick<Asset, 'symbol' | 'name' | 'asset_class' | 'network'> | null
 }
 
 export interface SyncRun {

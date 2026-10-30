@@ -7,6 +7,7 @@ import {
   BarChart3,
   ChevronDown,
   ChevronRight,
+  Coins,
   Layers3,
   LogOut,
   Menu,
@@ -18,7 +19,7 @@ import {
   X,
 } from 'lucide-react'
 import { isConfigured, supabase } from './lib/supabase'
-import type { Account, AssetClass, BrokerageTransaction, Position, Snapshot, SpendTransaction, SyncRun } from './types'
+import type { Account, AssetClass, BrokerageTransaction, Position, PositionSnapshot, Snapshot, SpendTransaction, SyncRun } from './types'
 
 const classMeta: Record<AssetClass, { label: string; color: string }> = {
   cash: { label: 'Cash', color: '#2f7d64' },
@@ -32,7 +33,7 @@ const classMeta: Record<AssetClass, { label: string; color: string }> = {
   liability: { label: 'Liabilities', color: '#9b4b43' },
 }
 
-type View = 'overview' | 'holdings' | 'activity'
+type View = 'overview' | 'crypto' | 'holdings' | 'activity'
 
 const money = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -52,7 +53,17 @@ function canonicalCryptoSymbol(symbol: string) {
   const normalized = symbol.toUpperCase()
   if (['WBTC', 'UBTC', 'BTCB'].includes(normalized)) return 'BTC'
   if (['WETH', 'STETH', 'WSTETH', 'RETH', 'WEETH', 'EETH'].includes(normalized)) return 'ETH'
+  if (['XAUT0', 'XAUT'].includes(normalized)) return 'XAUT'
   return normalized
+}
+
+function effectiveAssetClass(asset: { symbol: string; asset_class: AssetClass }) {
+  if (['XAUT', 'XAUT0', 'PAXG'].includes(asset.symbol.toUpperCase())) return 'gold' as AssetClass
+  return asset.asset_class
+}
+
+function isDigitalAsset(asset: { symbol: string; asset_class: AssetClass }) {
+  return ['crypto', 'stablecoin', 'nft'].includes(asset.asset_class) || ['XAUT', 'XAUT0', 'PAXG'].includes(asset.symbol.toUpperCase())
 }
 
 function canonicalEquitySymbol(symbol: string) {
@@ -66,11 +77,11 @@ function shortAddress(value: string) {
   return match ? `${match[0].slice(0, 6)}…${match[0].slice(-4)}` : null
 }
 
-function positionPlatform(position: Position) {
-  const identity = `${position.account.name} ${position.account.institution} ${position.source_key}`
+function platformIdentity(account: Pick<Account, 'name' | 'institution'>, sourceKey = '') {
+  const identity = `${account.name} ${account.institution} ${sourceKey}`
   const address = shortAddress(identity)
   if (address) return address
-  if (/rabby|hyperliquid/i.test(identity)) return position.account.name.split(' · ')[0].replace(/^Hyperliquid\s*[·:-]?\s*/i, '') || 'Self-custody'
+  if (/rabby|hyperliquid/i.test(identity)) return account.name.split(' · ')[0].replace(/^Hyperliquid\s*[·:-]?\s*/i, '') || 'Self-custody'
   if (/schwab|charles/i.test(identity)) return 'Charles Schwab'
   if (/wio/i.test(identity)) return 'Wio'
   if (/xtb/i.test(identity)) return 'XTB'
@@ -78,7 +89,11 @@ function positionPlatform(position: Position) {
   if (/india|inr/i.test(identity)) return 'India cash'
   if (/ether\.fi|etherfi|gbp/i.test(identity)) return 'Ether.fi UK'
   if (/kast/i.test(identity)) return 'KAST'
-  return position.account.institution || position.account.name
+  return account.institution || account.name
+}
+
+function positionPlatform(position: Position) {
+  return platformIdentity(position.account, position.source_key)
 }
 
 function Login() {
@@ -306,6 +321,7 @@ function Dashboard({ session }: { session: Session }) {
   const [positions, setPositions] = useState<Position[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
+  const [positionSnapshots, setPositionSnapshots] = useState<PositionSnapshot[]>([])
   const [syncRuns, setSyncRuns] = useState<SyncRun[]>([])
   const [brokerageTransactions, setBrokerageTransactions] = useState<BrokerageTransaction[]>([])
   const [spendTransactions, setSpendTransactions] = useState<SpendTransaction[]>([])
@@ -315,23 +331,26 @@ function Dashboard({ session }: { session: Session }) {
   const [showHoldingForm, setShowHoldingForm] = useState(false)
   const [expandedDigital, setExpandedDigital] = useState<string | null>(null)
   const [expandedEquity, setExpandedEquity] = useState<string | null>(null)
+  const [selectedAllocation, setSelectedAllocation] = useState<AssetClass | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
-    const [positionsResult, accountsResult, snapshotsResult, syncRunsResult, brokerageResult, spendResult] = await Promise.all([
+    const [positionsResult, accountsResult, snapshotsResult, positionSnapshotsResult, syncRunsResult, brokerageResult, spendResult] = await Promise.all([
       supabase.from('positions').select('*, account:accounts(*), asset:assets(*)').order('value_usd', { ascending: false }),
       supabase.from('accounts').select('*').order('name'),
       supabase.from('portfolio_snapshots').select('*').order('snapshot_date', { ascending: true }).limit(90),
+      supabase.from('position_snapshots').select('snapshot_date,source_key,quantity,price_usd,value_usd,account:accounts(name,institution),asset:assets(symbol,name,asset_class,network)').order('snapshot_date', { ascending: true }).limit(10000),
       supabase.from('sync_runs').select('id,source,status,records_written,message,started_at,finished_at').order('started_at', { ascending: false }).limit(20),
       supabase.from('brokerage_transactions').select('id,event_time,event_type,amount_usd,realized_pnl_usd').order('event_time', { ascending: false }).limit(1000),
       supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status').order('occurred_at', { ascending: false }).limit(1000),
     ])
-    const failure = positionsResult.error || accountsResult.error || snapshotsResult.error || syncRunsResult.error || brokerageResult.error || spendResult.error
+    const failure = positionsResult.error || accountsResult.error || snapshotsResult.error || positionSnapshotsResult.error || syncRunsResult.error || brokerageResult.error || spendResult.error
     if (failure) setError(failure.message)
     setPositions((positionsResult.data || []) as unknown as Position[])
     setAccounts((accountsResult.data || []) as Account[])
     setSnapshots((snapshotsResult.data || []) as Snapshot[])
+    setPositionSnapshots((positionSnapshotsResult.data || []) as unknown as PositionSnapshot[])
     setSyncRuns((syncRunsResult.data || []) as SyncRun[])
     setBrokerageTransactions((brokerageResult.data || []) as BrokerageTransaction[])
     setSpendTransactions((spendResult.data || []) as SpendTransaction[])
@@ -343,14 +362,37 @@ function Dashboard({ session }: { session: Session }) {
   const total = useMemo(() => positions.reduce((sum, position) => sum + Number(position.value_usd), 0), [positions])
   const allocation = useMemo(() => {
     const grouped = new Map<string, number>()
-    positions.forEach((position) => grouped.set(position.asset.asset_class, (grouped.get(position.asset.asset_class) || 0) + Number(position.value_usd)))
+    positions.forEach((position) => {
+      const assetClass = effectiveAssetClass(position.asset)
+      grouped.set(assetClass, (grouped.get(assetClass) || 0) + Number(position.value_usd))
+    })
     return Object.entries(classMeta)
       .map(([key, meta]) => ({ key, ...meta, value: grouped.get(key) || 0 }))
       .filter((item) => item.value > 0)
   }, [positions])
   const liquid = allocation.filter((item) => ['cash', 'stablecoin'].includes(item.key)).reduce((sum, item) => sum + item.value, 0)
+  const allocationArcs = allocation.map((item, index) => ({
+    ...item,
+    percent: total ? (item.value / total) * 100 : 0,
+    offset: -(total ? (allocation.slice(0, index).reduce((sum, entry) => sum + entry.value, 0) / total) * 100 : 0),
+  }))
   const equities = allocation.find((item) => item.key === 'equity')?.value || 0
   const crypto = allocation.filter((item) => ['crypto', 'nft'].includes(item.key)).reduce((sum, item) => sum + item.value, 0)
+  const allocationBreakdowns = useMemo(() => {
+    const classes = new Map<AssetClass, Map<string, number>>()
+    positions.forEach((position) => {
+      const assetClass = effectiveAssetClass(position.asset)
+      const platforms = classes.get(assetClass) || new Map<string, number>()
+      const platform = positionPlatform(position)
+      platforms.set(platform, (platforms.get(platform) || 0) + Number(position.value_usd))
+      classes.set(assetClass, platforms)
+    })
+    return classes
+  }, [positions])
+  const selectedAllocationItem = allocation.find((item) => item.key === selectedAllocation)
+  const selectedAllocationPlatforms = selectedAllocation
+    ? [...(allocationBreakdowns.get(selectedAllocation)?.entries() || [])].sort((a, b) => b[1] - a[1])
+    : []
   const platformTotals = useMemo(() => {
     const grouped = new Map<string, number>()
     positions.forEach((position) => {
@@ -362,7 +404,7 @@ function Dashboard({ session }: { session: Session }) {
   const equityPositions = positions.filter((position) => position.asset.asset_class === 'equity')
   const cryptoExposure = useMemo(() => {
     const grouped = new Map<string, { symbol: string; name: string; value: number; quantity: number; breakdown: Map<string, number> }>()
-    positions.filter((position) => ['crypto', 'stablecoin'].includes(position.asset.asset_class)).forEach((position) => {
+    positions.filter((position) => ['crypto', 'stablecoin'].includes(effectiveAssetClass(position.asset))).forEach((position) => {
       const symbol = canonicalCryptoSymbol(position.asset.symbol)
       const current = grouped.get(symbol) || { symbol, name: position.asset.name, value: 0, quantity: 0, breakdown: new Map<string, number>() }
       current.value += Number(position.value_usd)
@@ -401,6 +443,36 @@ function Dashboard({ session }: { session: Session }) {
   }, [equityPositions])
   const stockCostBasis = equityExposure.reduce((sum, asset) => sum + asset.pricedCost, 0)
   const stockPnl = equityExposure.reduce((sum, asset) => sum + asset.pricedValue - asset.pricedCost, 0)
+  const cryptoHistory = useMemo(() => {
+    const grouped = new Map<string, { date: string; total: number; platforms: Map<string, number> }>()
+    positionSnapshots.forEach((snapshot) => {
+      if (!snapshot.asset || !snapshot.account || !isDigitalAsset(snapshot.asset)) return
+      const current = grouped.get(snapshot.snapshot_date) || { date: snapshot.snapshot_date, total: 0, platforms: new Map<string, number>() }
+      const value = Number(snapshot.value_usd)
+      const platform = platformIdentity(snapshot.account, snapshot.source_key)
+      current.total += value
+      current.platforms.set(platform, (current.platforms.get(platform) || 0) + value)
+      grouped.set(snapshot.snapshot_date, current)
+    })
+    return [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date))
+  }, [positionSnapshots])
+  const currentDigitalValue = positions.filter((position) => isDigitalAsset(position.asset)).reduce((sum, position) => sum + Number(position.value_usd), 0)
+  const firstCryptoPoint = cryptoHistory[0]
+  const latestCryptoPoint = cryptoHistory[cryptoHistory.length - 1]
+  const priorCryptoPoint = cryptoHistory[cryptoHistory.length - 2]
+  const cryptoWeeklyChange = latestCryptoPoint && priorCryptoPoint ? latestCryptoPoint.total - priorCryptoPoint.total : 0
+  const cryptoSinceStart = latestCryptoPoint && firstCryptoPoint ? latestCryptoPoint.total - firstCryptoPoint.total : 0
+  const cryptoChartMin = cryptoHistory.length ? Math.min(...cryptoHistory.map((point) => point.total)) : 0
+  const cryptoChartMax = cryptoHistory.length ? Math.max(...cryptoHistory.map((point) => point.total)) : 0
+  const cryptoChartPoints = cryptoHistory.map((point, index) => {
+    const x = cryptoHistory.length === 1 ? 500 : (index / (cryptoHistory.length - 1)) * 1000
+    const range = cryptoChartMax - cryptoChartMin || 1
+    const y = 270 - ((point.total - cryptoChartMin) / range) * 230
+    return `${x},${y}`
+  }).join(' ')
+  const cryptoPlatformRows = latestCryptoPoint
+    ? [...latestCryptoPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, start: firstCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
+    : []
   const realizedXtb = brokerageTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
   const recentSpend = spendTransactions.filter((transaction) => new Date(transaction.occurred_at).getTime() >= Date.now() - 30 * 86_400_000)
   const recentSpendTotal = recentSpend.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
@@ -421,6 +493,7 @@ function Dashboard({ session }: { session: Session }) {
 
   const navItems: Array<{ id: View; label: string; icon: typeof BarChart3 }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
+    { id: 'crypto', label: 'Crypto value', icon: Coins },
     { id: 'holdings', label: 'Holdings', icon: Layers3 },
     { id: 'activity', label: 'Activity', icon: Activity },
   ]
@@ -457,7 +530,7 @@ function Dashboard({ session }: { session: Session }) {
 
         <div className={`page-content ${view === 'overview' ? 'overview-page' : ''}`}>
           {view !== 'overview' && <div className="page-heading">
-            <div><p className="eyebrow">{view.toUpperCase()}</p><h1>{view === 'holdings' ? 'All holdings' : 'Portfolio activity'}</h1></div>
+            <div><p className="eyebrow">{view.toUpperCase()}</p><h1>{view === 'crypto' ? 'Crypto value history' : view === 'holdings' ? 'All holdings' : 'Portfolio activity'}</h1></div>
             <div className="heading-actions"><button className="secondary-button" onClick={() => void load()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} />Refresh</button><button className="primary-button compact" onClick={() => setShowHoldingForm(true)}><Plus size={17} />Add holding</button></div>
           </div>}
 
@@ -480,9 +553,10 @@ function Dashboard({ session }: { session: Session }) {
                 <article className="panel overview-allocation">
                   <div className="panel-heading"><div><p className="eyebrow">ASSET ALLOCATION</p><h2>Where the wealth sits</h2></div></div>
                   <div className="allocation-visual">
-                    <div className="allocation-pie" style={{ background: `conic-gradient(${allocation.reduce((parts, item, index) => { const before = allocation.slice(0, index).reduce((sum, entry) => sum + entry.value, 0); const start = total ? (before / total) * 100 : 0; const end = total ? ((before + item.value) / total) * 100 : 0; parts.push(`${item.color} ${start}% ${end}%`); return parts }, [] as string[]).join(', ')})` }}><span><strong>{allocation.length}</strong>classes</span></div>
-                    <div className="allocation-legend">{allocation.map((item) => <div key={item.key}><span><i style={{ background: item.color }} />{item.label}</span><strong>{total ? ((item.value / total) * 100).toFixed(1) : '0.0'}%</strong><small>{formatMoney(item.value)}</small></div>)}</div>
+                    <div className="allocation-pie interactive-pie"><svg viewBox="0 0 42 42" aria-label="Interactive asset allocation">{allocationArcs.map((item) => <circle key={item.key} cx="21" cy="21" r="15.9155" fill="none" stroke={item.color} strokeWidth="9" pathLength="100" strokeDasharray={`${item.percent} ${100 - item.percent}`} strokeDashoffset={item.offset} role="button" tabIndex={0} aria-label={`${item.label}, ${item.percent.toFixed(1)} percent`} onClick={() => setSelectedAllocation(item.key as AssetClass)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setSelectedAllocation(item.key as AssetClass) }} />)}</svg><span><strong>{allocation.length}</strong>classes</span></div>
+                    <div className="allocation-legend">{allocation.map((item) => <button key={item.key} onClick={() => setSelectedAllocation(item.key as AssetClass)}><span><i style={{ background: item.color }} />{item.label}</span><strong>{total ? ((item.value / total) * 100).toFixed(1) : '0.0'}%</strong><small>{formatMoney(item.value)}</small></button>)}</div>
                   </div>
+                  {selectedAllocation && selectedAllocationItem && <div className="allocation-drilldown"><div className="drilldown-head"><span><i style={{ background: selectedAllocationItem.color }} /><strong>{selectedAllocationItem.label}</strong><small>{formatMoney(selectedAllocationItem.value)}</small></span><button onClick={() => setSelectedAllocation(null)} aria-label="Close allocation detail"><X size={14} /></button></div><p>Spread across platforms and addresses</p><div>{selectedAllocationPlatforms.map(([platform, value]) => <section key={platform}><span>{platform}</span><strong>{formatMoney(value)}</strong><small>{((value / selectedAllocationItem.value) * 100).toFixed(1)}%</small></section>)}</div></div>}
                 </article>
 
                 <article className="panel overview-digital">
@@ -501,6 +575,36 @@ function Dashboard({ session }: { session: Session }) {
                   <div className="panel-heading"><div><p className="eyebrow">LAST 30 DAYS</p><h2>Spending</h2></div><span>{formatMoney(recentSpendTotal)}</span></div>
                   {spendTransactions.length ? <><div className="spend-source-list">{spendBySource.map(([source, value]) => <div key={source}><span>{source}</span><strong>{formatMoney(value)}</strong></div>)}</div><div className="spend-divider" /><div className="recent-spend-list">{recentSpend.slice(0, 10).map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card transaction'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b>{formatMoney(Math.abs(Number(transaction.amount_usd)))}</b></div>)}</div></> : <div className="spend-empty"><span>—</span><strong>No spending imported</strong><p>Ether.fi, KAST and Ethena transactions will appear here after their exports are added.</p></div>}
                 </aside>
+              </div>
+            </section>
+          )}
+
+          {view === 'crypto' && (
+            <section className="crypto-history-page">
+              <div className="history-kpis">
+                <article><span>Current digital wealth</span><strong>{formatMoney(currentDigitalValue)}</strong><small>Crypto, stablecoins, NFTs and tokenized gold</small></article>
+                <article><span>Latest weekly change</span><strong className={cryptoWeeklyChange >= 0 ? 'value-positive' : 'value-negative'}>{cryptoWeeklyChange >= 0 ? '+' : ''}{formatMoney(cryptoWeeklyChange)}</strong><small>{priorCryptoPoint ? `Since ${new Date(`${priorCryptoPoint.date}T00:00:00`).toLocaleDateString()}` : 'A second weekly snapshot is required'}</small></article>
+                <article><span>Since tracking began</span><strong className={cryptoSinceStart >= 0 ? 'value-positive' : 'value-negative'}>{cryptoSinceStart >= 0 ? '+' : ''}{formatMoney(cryptoSinceStart)}</strong><small>{firstCryptoPoint ? `From ${new Date(`${firstCryptoPoint.date}T00:00:00`).toLocaleDateString()}` : 'Historical backfill pending'}</small></article>
+                <article><span>History coverage</span><strong>{cryptoHistory.length} weeks</strong><small>{firstCryptoPoint && latestCryptoPoint ? `${firstCryptoPoint.date} → ${latestCryptoPoint.date}` : 'No snapshots available'}</small></article>
+              </div>
+
+              <div className="history-grid">
+                <article className="panel history-chart-panel">
+                  <div className="panel-heading"><div><p className="eyebrow">WEEKLY ADDRESS SNAPSHOTS</p><h2>Crypto wealth over time</h2></div><span>{latestCryptoPoint ? formatMoney(latestCryptoPoint.total) : 'Pending'}</span></div>
+                  {cryptoHistory.length ? <div className="history-chart"><div className="chart-scale"><span>{formatMoney(cryptoChartMax)}</span><span>{formatMoney(cryptoChartMin)}</span></div><svg viewBox="0 0 1000 300" preserveAspectRatio="none" role="img" aria-label="Weekly crypto wealth chart"><defs><linearGradient id="cryptoArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#68d3a0" stopOpacity=".32" /><stop offset="1" stopColor="#68d3a0" stopOpacity="0" /></linearGradient></defs><path d={`M ${cryptoChartPoints.replaceAll(' ', ' L ')} L 1000,300 L 0,300 Z`} fill="url(#cryptoArea)" /><polyline points={cryptoChartPoints} fill="none" stroke="#68d3a0" strokeWidth="4" vectorEffect="non-scaling-stroke" />{cryptoHistory.map((point, index) => { const [x, y] = cryptoChartPoints.split(' ')[index].split(','); return <circle key={point.date} cx={x} cy={y} r="5" fill="#0d1216" stroke="#68d3a0"><title>{point.date}: {formatMoney(point.total)}</title></circle> })}</svg><div className="chart-dates"><span>{firstCryptoPoint?.date}</span><span>{latestCryptoPoint?.date}</span></div></div> : <div className="history-empty"><Coins size={24} /><strong>Historical backfill not loaded yet</strong><p>The first observed snapshot is available after a successful sync. Reconstructed weekly history from 2018 requires an indexed historical-balance API.</p></div>}
+                </article>
+
+                <article className="panel history-address-panel">
+                  <div className="panel-heading"><div><p className="eyebrow">ADDRESS / PLATFORM</p><h2>Latest composition</h2></div><span>{cryptoPlatformRows.length}</span></div>
+                  <div className="history-address-list">{cryptoPlatformRows.map((row) => { const delta = row.value - row.start; return <div key={row.platform}><span><strong>{row.platform}</strong><small>{latestCryptoPoint ? ((row.value / latestCryptoPoint.total) * 100).toFixed(1) : '0.0'}% of digital wealth</small></span><b>{formatMoney(row.value)}</b><em className={delta >= 0 ? 'value-positive' : 'value-negative'}>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</em></div> })}</div>
+                </article>
+
+                <article className="panel history-method-panel">
+                  <div><p className="eyebrow">VALUATION METHOD</p><h2>Observed vs reconstructed</h2></div>
+                  <p><strong>Observed</strong> snapshots use the balances and USD prices returned during each weekly sync. They are the source of truth going forward.</p>
+                  <p><strong>Reconstructed</strong> history uses historical balances at each weekly block plus that asset’s USD price on the same date. It will be labelled separately because DeFi receipt tokens and unsupported protocols may not reconstruct perfectly.</p>
+                  <span>Only positions worth at least $100 on that historical date are retained in the backfill.</span>
+                </article>
               </div>
             </section>
           )}

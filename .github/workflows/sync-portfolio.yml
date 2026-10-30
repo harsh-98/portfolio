@@ -2,6 +2,9 @@ name: Snapshot portfolio
 
 on:
   workflow_dispatch:
+  schedule:
+    # Every Monday at 08:47 Asia/Kolkata (03:17 UTC).
+    - cron: '17 3 * * 1'
 
 permissions:
   contents: read
@@ -20,7 +23,12 @@ jobs:
         with:
           node-version: 22
       - name: Sync live sources and save daily snapshot
-        run: node scripts/sync-portfolio.mjs --only=rabby,binance
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SECRET_KEY" ] || [ -z "$PORTFOLIO_OWNER_EMAIL" ] || [ -z "$PORTFOLIO_EVM_ADDRESSES" ] || [ -z "$BINANCE_API_KEY" ] || [ -z "$BINANCE_API_SECRET" ]; then
+            echo "::notice::Weekly snapshot skipped because the required repository secrets are not configured."
+            exit 0
+          fi
+          node scripts/sync-portfolio.mjs --only=rabby,binance
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
