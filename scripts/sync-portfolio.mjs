@@ -13,8 +13,11 @@ const debug = args.has("--debug");
 const onlyArg = process.argv.find((arg) => arg.startsWith("--only="));
 const only = onlyArg ? new Set(onlyArg.slice(7).split(",")) : null;
 const shouldRun = (source) => !only || only.has(source);
+const serverCredentials = process.env.PORTFOLIO_SERVER_KEY_FILE?.trim()
+  ? parseKeyFile(await fs.readFile(process.env.PORTFOLIO_SERVER_KEY_FILE.trim(), "utf8"))
+  : {};
 const required = (name) => {
-  const value = process.env[name]?.trim();
+  const value = process.env[name]?.trim() || serverCredentials[name]?.trim();
   if (!value) throw new Error(`Missing ${name}`);
   return value;
 };
@@ -339,7 +342,7 @@ function parseKeyFile(text) {
 }
 
 async function loadBinance(keyFile) {
-  const credentials = keyFile ? parseKeyFile(await fs.readFile(keyFile, "utf8")) : process.env;
+  const credentials = keyFile ? parseKeyFile(await fs.readFile(keyFile, "utf8")) : { ...serverCredentials, ...process.env };
   const apiKey = credentials.BINANCE_API_KEY;
   const secret = credentials.BINANCE_API_SECRET;
   if (!apiKey || !secret) throw new Error("Binance key file is missing required variables");
@@ -679,12 +682,12 @@ if (shouldRun("rabby")) {
   if (result) sourcePositions.rabby = result;
 }
 if (shouldRun("hyperliquid")) {
-  const addressList = process.env.PORTFOLIO_HYPERLIQUID_ADDRESSES?.trim() || required("PORTFOLIO_EVM_ADDRESSES");
+  const addressList = process.env.PORTFOLIO_HYPERLIQUID_ADDRESSES?.trim() || serverCredentials.PORTFOLIO_HYPERLIQUID_ADDRESSES?.trim() || required("PORTFOLIO_EVM_ADDRESSES");
   const result = await captureSource("hyperliquid", () => loadHyperliquid(addressList.split(",").map((value) => value.trim()).filter(Boolean)));
   if (result) sourcePositions.hyperliquid = result;
 }
 if (shouldRun("binance")) {
-  const result = await captureSource("binance", () => loadBinance(process.env.BINANCE_KEY_FILE?.trim()));
+  const result = await captureSource("binance", () => loadBinance(process.env.BINANCE_KEY_FILE?.trim() || serverCredentials.BINANCE_KEY_FILE?.trim()));
   if (result) sourcePositions.binance = result;
 }
 if (shouldRun("wio")) {
@@ -721,8 +724,8 @@ if (dryRun) {
 
 const supabaseUrl = required("SUPABASE_URL").replace(/\/$/, "");
 const supabaseKey = required("SUPABASE_SECRET_KEY");
-const ownerEmail = process.env.PORTFOLIO_OWNER_EMAIL?.trim().toLowerCase();
-const configuredOwnerId = process.env.PORTFOLIO_OWNER_ID?.trim();
+const ownerEmail = (process.env.PORTFOLIO_OWNER_EMAIL?.trim() || serverCredentials.PORTFOLIO_OWNER_EMAIL?.trim())?.toLowerCase();
+const configuredOwnerId = process.env.PORTFOLIO_OWNER_ID?.trim() || serverCredentials.PORTFOLIO_OWNER_ID?.trim();
 const baseHeaders = { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, "Content-Type": "application/json" };
 async function supabase(endpoint, { method = "GET", body, prefer } = {}) {
   const response = await fetch(`${supabaseUrl}${endpoint}`, { method, headers: { ...baseHeaders, ...(prefer ? { Prefer: prefer } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });

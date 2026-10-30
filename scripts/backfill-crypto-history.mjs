@@ -12,8 +12,9 @@ const toDate = argValue("to", new Date().toISOString().slice(0, 10));
 const minimumValue = Number(argValue("minimum-value", "100"));
 const delayMs = Number(process.env.GOLDRUSH_DELAY_MS || 250);
 const hash = (value) => createHash("sha256").update(value).digest("hex").slice(0, 12);
+let serverCredentials = {};
 const required = (name) => {
-  const value = process.env[name]?.trim();
+  const value = process.env[name]?.trim() || serverCredentials[name]?.trim();
   if (!value) throw new Error(`Missing ${name}`);
   return value;
 };
@@ -26,8 +27,13 @@ function parseKeyFile(text) {
   }));
 }
 
+if (process.env.PORTFOLIO_SERVER_KEY_FILE?.trim()) {
+  serverCredentials = parseKeyFile(await fs.readFile(process.env.PORTFOLIO_SERVER_KEY_FILE.trim(), "utf8"));
+}
+
 async function goldRushKey() {
   if (process.env.GOLDRUSH_API_KEY?.trim()) return process.env.GOLDRUSH_API_KEY.trim();
+  if (serverCredentials.GOLDRUSH_API_KEY?.trim()) return serverCredentials.GOLDRUSH_API_KEY.trim();
   if (!process.env.GOLDRUSH_KEY_FILE?.trim()) throw new Error("Missing GOLDRUSH_API_KEY or GOLDRUSH_KEY_FILE");
   const values = parseKeyFile(await fs.readFile(process.env.GOLDRUSH_KEY_FILE.trim(), "utf8"));
   if (!values.GOLDRUSH_API_KEY) throw new Error("GoldRush key file must contain GOLDRUSH_API_KEY");
@@ -90,7 +96,7 @@ async function supabase(endpoint, { method = "GET", body, prefer } = {}) {
   if (!response.ok) throw new Error(`Supabase ${method} ${response.status}: ${data?.message || text.slice(0, 160)}`);
   return data;
 }
-let ownerId = process.env.PORTFOLIO_OWNER_ID?.trim();
+let ownerId = process.env.PORTFOLIO_OWNER_ID?.trim() || serverCredentials.PORTFOLIO_OWNER_ID?.trim();
 if (!ownerId) {
   const email = required("PORTFOLIO_OWNER_EMAIL").toLowerCase();
   const users = await supabase("/auth/v1/admin/users?page=1&per_page=100");
