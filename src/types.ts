@@ -26,9 +26,46 @@ export interface Position {
   price_usd: number
   value_usd: number
   cost_basis_usd: number | null
+  source_key: string
   as_of: string
+  metadata: Record<string, unknown>
   account: Account
   asset: Asset
+}
+
+export interface PositionSnapshot {
+  snapshot_date: string
+  source_key: string
+  value_usd: number
+}
+
+export interface SyncRun {
+  id: string
+  source: string
+  status: 'running' | 'success' | 'partial' | 'failed'
+  records_written: number
+  message: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+export interface BrokerageTransaction {
+  id: string
+  event_time: string
+  event_type: string
+  amount_usd: number | null
+  realized_pnl_usd: number | null
+}
+
+export interface SpendTransaction {
+  id: string
+  source: string
+  occurred_at: string
+  merchant: string | null
+  description: string | null
+  amount_usd: number
+  category: string | null
+  status: string | null
 }
 
 export interface Snapshot {

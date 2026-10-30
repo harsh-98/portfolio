@@ -1,0 +1,31 @@
+name: Snapshot portfolio
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portfolio-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sync live sources and save daily snapshot
+        run: node scripts/sync-portfolio.mjs --only=rabby,binance
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          PORTFOLIO_OWNER_EMAIL: ${{ secrets.PORTFOLIO_OWNER_EMAIL }}
+          PORTFOLIO_EVM_ADDRESSES: ${{ secrets.PORTFOLIO_EVM_ADDRESSES }}
+          BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+          BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+          PORTFOLIO_TIME_ZONE: Asia/Kolkata

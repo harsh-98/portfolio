@@ -47,6 +47,24 @@ Set these repository Actions variables:
 
 Set Pages source to **GitHub Actions**. Pushing to `main` builds and deploys the static dashboard.
 
-## Data imports
+## Data imports and snapshots
 
-Provider sync jobs will run locally or in a protected backend process. Only normalized holdings and snapshots are written to Supabase. Credentials remain in macOS Keychain or the provider's protected secrets store.
+The local sync adapter reads live FX (Frankfurter), Rabby wallet balances, Binance, Wio CSV exports, and XTB XLSX/ZIP exports. It writes current positions, one position-level snapshot per day, XTB transaction history, and an audit row for each source. It never writes credentials to the database.
+
+Run a read-only reconciliation first:
+
+```bash
+npm run sync:portfolio -- --dry-run
+```
+
+Then provide the server-side variables in `.env.example` through a protected environment and run without `--dry-run`. Source-specific refreshes are supported with `--only=rabby,binance,wio,xtb`.
+
+The protected GitHub Action is ready for Rabby and Binance snapshots and can be run manually. A daily 08:00 Asia/Kolkata schedule can be enabled after its six values are explicitly placed in encrypted GitHub Actions secrets. Wio and XTB are imported locally because their exports are intentionally not uploaded to GitHub.
+
+Rabby cost basis is an estimate only when recent on-chain history contains priced external receipts. Internal transfers between the configured wallets are excluded; positions without enough evidence remain explicitly unavailable.
+
+## Card-spend history
+
+Supabase includes an owner-scoped `spend_transactions` ledger for Ether.fi Cash, KAST, Ethena Pay, and future cards. It stores merchant, date, status, original amount/currency, normalized USD amount, category, and at most the last four card digits—never a full card number or login secret.
+
+Ether.fi officially supports CSV and Excel transaction-history exports. Put those exports in the private banking folder for normalization. KAST and Ethena Pay do not currently publish a consumer card-history API suitable for this dashboard; use an in-app export or statement when available. Provider-specific import mappings are added only after inspecting a sample export, so columns and refund/pending semantics are not guessed.

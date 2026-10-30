@@ -20,7 +20,7 @@ import {
   X,
 } from 'lucide-react'
 import { isConfigured, supabase } from './lib/supabase'
-import type { Account, AssetClass, Position, Snapshot } from './types'
+import type { Account, AssetClass, BrokerageTransaction, Position, PositionSnapshot, Snapshot, SpendTransaction, SyncRun } from './types'
 
 const classMeta: Record<AssetClass, { label: string; color: string }> = {
   cash: { label: 'Cash', color: '#2f7d64' },
@@ -268,36 +268,16 @@ function HoldingForm({ accounts, onClose, onSaved }: HoldingFormProps) {
   )
 }
 
-function AllocationDonut({ allocation, total }: { allocation: Array<{ key: string; label: string; value: number; color: string }>; total: number }) {
-  const positive = allocation.filter((item) => item.value > 0)
-  let cursor = 0
-  const stops = positive.map((item) => {
-    const start = cursor
-    cursor += total ? (item.value / total) * 100 : 0
-    return `${item.color} ${start}% ${cursor}%`
-  })
-  const background = stops.length ? `conic-gradient(${stops.join(', ')})` : 'conic-gradient(#e6e9e5 0 100%)'
-  return (
-    <div className="allocation-layout">
-      <div className="donut" style={{ background }}><div><strong>{formatMoney(total)}</strong><span>Total assets</span></div></div>
-      <div className="allocation-legend">
-        {allocation.map((item) => (
-          <div className="legend-row" key={item.key}>
-            <span className="legend-label"><i style={{ background: item.color }} />{item.label}</span>
-            <span><strong>{total ? ((item.value / total) * 100).toFixed(1) : '0.0'}%</strong><small>{formatMoney(item.value)}</small></span>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 function Dashboard({ session }: { session: Session }) {
   const [view, setView] = useState<View>('overview')
   const [mobileNav, setMobileNav] = useState(false)
   const [positions, setPositions] = useState<Position[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
+  const [positionSnapshots, setPositionSnapshots] = useState<PositionSnapshot[]>([])
+  const [syncRuns, setSyncRuns] = useState<SyncRun[]>([])
+  const [brokerageTransactions, setBrokerageTransactions] = useState<BrokerageTransaction[]>([])
+  const [spendTransactions, setSpendTransactions] = useState<SpendTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
@@ -306,16 +286,24 @@ function Dashboard({ session }: { session: Session }) {
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
-    const [positionsResult, accountsResult, snapshotsResult] = await Promise.all([
+    const [positionsResult, accountsResult, snapshotsResult, positionSnapshotsResult, syncRunsResult, brokerageResult, spendResult] = await Promise.all([
       supabase.from('positions').select('*, account:accounts(*), asset:assets(*)').order('value_usd', { ascending: false }),
       supabase.from('accounts').select('*').order('name'),
       supabase.from('portfolio_snapshots').select('*').order('snapshot_date', { ascending: true }).limit(90),
+      supabase.from('position_snapshots').select('snapshot_date,source_key,value_usd').order('snapshot_date', { ascending: false }).limit(2000),
+      supabase.from('sync_runs').select('id,source,status,records_written,message,started_at,finished_at').order('started_at', { ascending: false }).limit(20),
+      supabase.from('brokerage_transactions').select('id,event_time,event_type,amount_usd,realized_pnl_usd').order('event_time', { ascending: false }).limit(1000),
+      supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status').order('occurred_at', { ascending: false }).limit(1000),
     ])
-    const failure = positionsResult.error || accountsResult.error || snapshotsResult.error
+    const failure = positionsResult.error || accountsResult.error || snapshotsResult.error || positionSnapshotsResult.error || syncRunsResult.error || brokerageResult.error || spendResult.error
     if (failure) setError(failure.message)
     setPositions((positionsResult.data || []) as unknown as Position[])
     setAccounts((accountsResult.data || []) as Account[])
     setSnapshots((snapshotsResult.data || []) as Snapshot[])
+    setPositionSnapshots((positionSnapshotsResult.data || []) as PositionSnapshot[])
+    setSyncRuns((syncRunsResult.data || []) as SyncRun[])
+    setBrokerageTransactions((brokerageResult.data || []) as BrokerageTransaction[])
+    setSpendTransactions((spendResult.data || []) as SpendTransaction[])
     setLoading(false)
   }, [])
 
@@ -333,6 +321,33 @@ function Dashboard({ session }: { session: Session }) {
   const equities = allocation.find((item) => item.key === 'equity')?.value || 0
   const crypto = allocation.filter((item) => ['crypto', 'nft'].includes(item.key)).reduce((sum, item) => sum + item.value, 0)
   const alternatives = total - liquid - equities - crypto
+  const sourceTotals = useMemo(() => {
+    const grouped = new Map<string, number>()
+    positions.forEach((position) => grouped.set(position.account.institution || position.account.name, (grouped.get(position.account.institution || position.account.name) || 0) + Number(position.value_usd)))
+    return [...grouped.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
+  }, [positions])
+  const priorPositionValues = useMemo(() => {
+    const dates = [...new Set(positionSnapshots.map((snapshot) => snapshot.snapshot_date))].sort().reverse()
+    const priorDate = dates.find((date) => date < new Date().toISOString().slice(0, 10))
+    return new Map(positionSnapshots.filter((snapshot) => snapshot.snapshot_date === priorDate).map((snapshot) => [snapshot.source_key, Number(snapshot.value_usd)]))
+  }, [positionSnapshots])
+  const walletChains = useMemo(() => {
+    const grouped = new Map<string, { wallet: string; chain: string; value: number; previous: number }>()
+    positions.filter((position) => position.account.institution === 'Rabby').forEach((position) => {
+      const key = position.account.name
+      const current = grouped.get(key) || { wallet: position.account.name.split(' · ')[0], chain: position.asset.network || position.account.name.split(' · ')[1] || 'Unknown', value: 0, previous: 0 }
+      current.value += Number(position.value_usd)
+      current.previous += priorPositionValues.get(position.source_key) || 0
+      grouped.set(key, current)
+    })
+    return [...grouped.values()].sort((a, b) => b.value - a.value)
+  }, [positions, priorPositionValues])
+  const cryptoPositions = positions.filter((position) => ['crypto', 'stablecoin'].includes(position.asset.asset_class) && Number(position.value_usd) >= 100)
+  const equityPositions = positions.filter((position) => position.asset.asset_class === 'equity')
+  const realizedXtb = brokerageTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
+  const recentSpend = spendTransactions.filter((transaction) => new Date(transaction.occurred_at).getTime() >= Date.now() - 30 * 86_400_000)
+  const recentSpendTotal = recentSpend.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
+  const spendBySource = [...recentSpend.reduce((grouped, transaction) => grouped.set(transaction.source, (grouped.get(transaction.source) || 0) + Math.abs(Number(transaction.amount_usd))), new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1])
   const previous = snapshots.length > 1 ? snapshots[snapshots.length - 2].total_value_usd : null
   const change = previous ? total - previous : 0
   const changePercent = previous ? (change / previous) * 100 : 0
@@ -404,14 +419,35 @@ function Dashboard({ session }: { session: Session }) {
                 })}
               </section>
 
-              <section className="content-grid">
-                <article className="panel allocation-panel">
-                  <div className="panel-heading"><div><p className="eyebrow">COMPOSITION</p><h2>Asset allocation</h2></div><span>Live</span></div>
-                  {allocation.length ? <AllocationDonut allocation={allocation} total={total} /> : <EmptyState compact />}
+              <section className="overview-grid">
+                <article className="panel compact-panel">
+                  <div className="panel-heading"><div><p className="eyebrow">BY PLATFORM</p><h2>Source totals</h2></div><span>{sourceTotals.length} sources</span></div>
+                  <div className="dense-list">{sourceTotals.map((source) => <div key={source.name}><strong>{source.name}</strong><span>{formatMoney(source.value)}<small>{total ? ((source.value / total) * 100).toFixed(1) : '0.0'}%</small></span></div>)}</div>
                 </article>
-                <article className="panel">
-                  <div className="panel-heading"><div><p className="eyebrow">LARGEST POSITIONS</p><h2>Top holdings</h2></div><button onClick={() => chooseView('holdings')}>View all</button></div>
-                  {positions.length ? <div className="top-holdings">{positions.slice(0, 5).map((position, index) => <div key={position.id}><span className="rank">{String(index + 1).padStart(2, '0')}</span><span className="asset-badge">{position.asset.symbol.slice(0, 3)}</span><div><strong>{position.asset.name}</strong><small>{position.account.name}</small></div><span className="holding-value"><strong>{formatMoney(position.value_usd)}</strong><small>{total ? ((position.value_usd / total) * 100).toFixed(1) : 0}%</small></span></div>)}</div> : <EmptyState compact />}
+
+                <article className="panel compact-panel">
+                  <div className="panel-heading"><div><p className="eyebrow">ALLOCATION</p><h2>Asset mix</h2></div><span>Live</span></div>
+                  <div className="dense-list allocation-list">{allocation.map((item) => <div key={item.key}><strong><i style={{ background: item.color }} />{item.label}</strong><span>{formatMoney(item.value)}<small>{total ? ((item.value / total) * 100).toFixed(1) : '0.0'}%</small></span></div>)}</div>
+                </article>
+
+                {spendTransactions.length > 0 && <article className="panel compact-panel full-span">
+                  <div className="panel-heading"><div><p className="eyebrow">LAST 30 DAYS</p><h2>Card spending · {formatMoney(recentSpendTotal)}</h2></div><span>{recentSpend.length} transactions</span></div>
+                  <div className="spend-layout"><div className="dense-list">{spendBySource.map(([source, value]) => <div key={source}><strong>{source}</strong><span>{formatMoney(value)}</span></div>)}</div><div className="recent-spend">{recentSpend.slice(0, 6).map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card transaction'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><strong>{formatMoney(Math.abs(Number(transaction.amount_usd)))}</strong></div>)}</div></div>
+                </article>}
+
+                <article className="panel compact-panel full-span">
+                  <div className="panel-heading"><div><p className="eyebrow">WALLET → CHAIN</p><h2>On-chain exposure</h2></div><span>{walletChains.length} networks</span></div>
+                  {walletChains.length ? <div className="table-scroll"><table className="dense-table"><thead><tr><th>Wallet</th><th>Chain</th><th>Current value</th><th>Since prior snapshot</th><th>Portfolio weight</th></tr></thead><tbody>{walletChains.map((row) => { const delta = row.previous ? row.value - row.previous : 0; return <tr key={`${row.wallet}:${row.chain}`}><td><strong>{row.wallet}</strong></td><td>{row.chain}</td><td><strong>{formatMoney(row.value)}</strong></td><td className={delta > 0 ? 'value-positive' : delta < 0 ? 'value-negative' : ''}>{row.previous ? `${delta >= 0 ? '+' : ''}${formatMoney(delta)}` : '—'}</td><td>{total ? ((row.value / total) * 100).toFixed(2) : '0.00'}%</td></tr> })}</tbody></table></div> : <EmptyState compact />}
+                </article>
+
+                <article className="panel compact-panel full-span">
+                  <div className="panel-heading"><div><p className="eyebrow">CRYPTO ABOVE $100</p><h2>Digital-asset positions</h2></div><span>{cryptoPositions.length} positions</span></div>
+                  {cryptoPositions.length ? <div className="table-scroll"><table className="dense-table crypto-table"><thead><tr><th>Asset</th><th>Wallet / venue</th><th>Chain</th><th>Quantity</th><th>Price</th><th>Est. acquisition</th><th>Value</th></tr></thead><tbody>{cryptoPositions.map((position) => { const acquisition = Number(position.metadata?.estimated_acquisition_price_usd || 0); return <tr key={position.id}><td><strong>{position.asset.symbol}</strong><small>{position.asset.name}</small></td><td>{position.account.name}</td><td>{position.asset.network || '—'}</td><td>{formatAmount(position.quantity)}</td><td>{formatMoney(position.price_usd)}</td><td>{acquisition ? formatMoney(acquisition) : 'Unavailable'}</td><td><strong>{formatMoney(position.value_usd)}</strong></td></tr> })}</tbody></table></div> : <EmptyState compact />}
+                </article>
+
+                <article className="panel compact-panel full-span">
+                  <div className="panel-heading"><div><p className="eyebrow">BROKERAGE DETAIL</p><h2>Equity positions</h2></div><span>{brokerageTransactions.length ? `${brokerageTransactions.length} XTB events · ${formatMoney(realizedXtb)} realized` : `${equityPositions.length} positions`}</span></div>
+                  {equityPositions.length ? <div className="table-scroll"><table className="dense-table"><thead><tr><th>Asset</th><th>Broker</th><th>Quantity</th><th>Cost basis</th><th>Value</th><th>Unrealized P/L</th></tr></thead><tbody>{equityPositions.slice(0, 20).map((position) => { const pnl = position.cost_basis_usd == null ? null : Number(position.value_usd) - Number(position.cost_basis_usd); return <tr key={position.id}><td><strong>{position.asset.symbol}</strong><small>{position.asset.name}</small></td><td>{position.account.institution}</td><td>{formatAmount(position.quantity)}</td><td>{position.cost_basis_usd == null ? '—' : formatMoney(position.cost_basis_usd)}</td><td><strong>{formatMoney(position.value_usd)}</strong></td><td className={pnl && pnl > 0 ? 'value-positive' : pnl && pnl < 0 ? 'value-negative' : ''}>{pnl == null ? '—' : formatMoney(pnl)}</td></tr> })}</tbody></table></div> : <EmptyState compact />}
                 </article>
               </section>
             </>
@@ -427,10 +463,9 @@ function Dashboard({ session }: { session: Session }) {
           )}
 
           {view === 'activity' && (
-            <section className="panel activity-panel">
-              <div className="timeline-mark"><Activity size={22} /></div>
-              <p className="eyebrow">AUDIT TRAIL</p><h2>Sync history is ready</h2><p>Every automatic refresh and manual import will appear here after the data adapters are connected.</p>
-              <div className="activity-stub"><span /><div><strong>Supabase workspace connected</strong><small>Authentication and row-level access are configured by the project migration.</small></div></div>
+            <section className="panel compact-panel">
+              <div className="panel-heading"><div><p className="eyebrow">AUDIT TRAIL</p><h2>Sync history</h2></div><span>{syncRuns.length} recent runs</span></div>
+              {syncRuns.length ? <div className="table-scroll"><table className="dense-table"><thead><tr><th>Source</th><th>Status</th><th>Records</th><th>Started</th><th>Message</th></tr></thead><tbody>{syncRuns.map((run) => <tr key={run.id}><td><strong>{run.source}</strong></td><td><span className={`status-pill ${run.status}`}>{run.status}</span></td><td>{run.records_written}</td><td>{new Date(run.started_at).toLocaleString()}</td><td>{run.message || '—'}</td></tr>)}</tbody></table></div> : <EmptyState compact />}
             </section>
           )}
         </div>

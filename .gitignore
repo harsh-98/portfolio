@@ -10,6 +10,7 @@ dist/
 backups/
 imports/
 reports/
+.private-*
 .supabase/
 supabase/.temp/
 *.tsbuildinfo
