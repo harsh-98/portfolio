@@ -75,6 +75,7 @@ export interface SpendTransaction {
   amount_usd: number
   category: string | null
   status: string | null
+  transaction_type: string
 }
 
 export interface Snapshot {

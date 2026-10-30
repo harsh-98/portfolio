@@ -270,6 +270,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .drilldown-head strong { font: 500 17px 'Newsreader', serif; }
 .drilldown-head small { color: #6e7a82; font-size: 8px; }
 .drilldown-head button { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid var(--line); border-radius: 6px; background: #151b20; color: #869199; }
+.drilldown-actions { display: flex; gap: 6px; }
 .allocation-drilldown > p { margin: 8px 0 4px; color: #5f6b73; font-size: 7px; text-transform: uppercase; letter-spacing: .08em; }
 .allocation-drilldown > div:last-child { max-height: calc(100% - 70px); overflow-y: auto; scrollbar-width: none; }
 .allocation-drilldown section { display: grid; grid-template-columns: minmax(0, 1fr) auto 38px; gap: 7px; padding: 6px 0; border-bottom: 1px solid #1e252b; color: #8b969e; font-size: 8px; }
@@ -330,6 +331,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .transaction-history section > b, .transaction-history section > em { color: #cdd5d9; font: normal 7px 'DM Mono', monospace; text-align: right; }
 .transaction-history > p { margin: 7px 0 1px; color: #657179; font-size: 7px; line-height: 1.5; }
 .broker-drilldown { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; padding: 13px; background: rgba(13,18,22,.99); backdrop-filter: blur(8px); }
+.broker-drilldown.fullscreen { position: fixed; inset: 14px; z-index: 100; border: 1px solid #303a42; border-radius: 10px; box-shadow: 0 24px 80px rgba(0,0,0,.72); }
 .broker-drilldown .drilldown-head > span { grid-template-columns: 8px 1fr; }
 .broker-drilldown .drilldown-head i { background: #68d3a0; }
 .broker-transaction-head, .broker-transaction-list section { display: grid; grid-template-columns: 64px minmax(105px, 1fr) minmax(95px, .8fr) 60px 62px; gap: 8px; align-items: center; }
@@ -345,6 +347,11 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .broker-transaction-list b, .broker-transaction-list em { color: #cbd3d7; font: normal 7px 'DM Mono', monospace; }
 .broker-transaction-list em.value-positive { color: var(--green); }
 .broker-transaction-list em.value-negative { color: var(--red); }
+.equity-grid { min-height: 0; flex: 1; border-top: 1px solid var(--line); }
+.equity-grid .ag-row { cursor: pointer; }
+.equity-drilldown { position: absolute; inset: 0; z-index: 4; padding: 13px; background: rgba(13,18,22,.99); backdrop-filter: blur(8px); }
+.equity-drilldown .drilldown-head i { background: var(--orange); }
+.equity-drilldown .equity-breakdown { margin: 10px 0 0; max-height: calc(100% - 58px); overflow-y: auto; }
 .broker-grid { min-height: 0; flex: 1; margin-top: 9px; }
 .equity-footer { flex: 0 0 auto; display: flex; justify-content: space-between; padding-top: 6px; color: #59656d; font-size: 7px; }
 

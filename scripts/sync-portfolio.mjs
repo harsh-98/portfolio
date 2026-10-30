@@ -300,6 +300,50 @@ async function loadWioStocks(jsonPath) {
   }));
 }
 
+async function loadEtherfiSpend(csvPath) {
+  const rows = parseCsv(await fs.readFile(csvPath, "utf8"));
+  const headers = rows.shift().map((value) => value.trim().toLowerCase());
+  const ix = Object.fromEntries(headers.map((name, index) => [name, index]));
+  const value = (row, name) => String(row[ix[name]] ?? "").trim();
+  const typeFor = (type) => ({
+    card_spend: "purchase",
+    card_refund: "refund",
+    topup: "topup",
+    cashback: "cashback",
+    cash_withdrawal: "withdrawal",
+  })[type] ?? type.replaceAll("_", " ");
+  return rows.map((row) => {
+    const sourceType = value(row, "type").toLowerCase();
+    const occurredAt = new Date(value(row, "timestamp"));
+    const amountUsd = number(value(row, "amount"));
+    const card = value(row, "card");
+    const merchant = value(row, "description").replace(/\s+/g, " ").trim();
+    const originalCurrency = value(row, "original currency").toUpperCase();
+    const identity = [occurredAt.toISOString(), sourceType, merchant, amountUsd, value(row, "currency"), card].join("|");
+    return {
+      source: "ether.fi",
+      external_ref: `etherfi:${hash(identity)}`,
+      occurred_at: occurredAt.toISOString(),
+      merchant: merchant || null,
+      description: sourceType.replaceAll("_", " "),
+      status: value(row, "status").toLowerCase() || null,
+      transaction_type: typeFor(sourceType),
+      original_amount: value(row, "original amount") ? number(value(row, "original amount")) : null,
+      original_currency: /^[A-Z]{3}$/.test(originalCurrency) ? originalCurrency : null,
+      amount_usd: round(amountUsd),
+      category: value(row, "category") || null,
+      card_last_four: /^\d{4}$/.test(card) ? card : null,
+      metadata: {
+        spending_mode: value(row, "spending mode") || null,
+        cashback_earned: value(row, "cashback earned") ? number(value(row, "cashback earned")) : null,
+        cashback_currency: value(row, "cashback currency") || null,
+        original_unit: originalCurrency && !/^[A-Z]{3}$/.test(originalCurrency) ? originalCurrency : null,
+        import_file: path.basename(csvPath),
+      },
+    };
+  }).filter((row) => Number.isFinite(new Date(row.occurred_at).getTime()) && row.external_ref);
+}
+
 async function loadXtb(sourcePath) {
   return withXlsxFromArchive(sourcePath, async (xlsxPath) => {
     const sheets = parseXlsxRows(xlsxPath);
@@ -385,10 +429,13 @@ function summarize(sourcePositions) {
   }]));
 }
 
-const fx = await loadFx();
+const portfolioSources = ["rabby", "binance", "wio", "wio-stocks", "xtb"];
+const needsPortfolioSync = !only || portfolioSources.some((source) => only.has(source));
+const fx = needsPortfolioSync ? await loadFx() : {};
 const sourcePositions = {};
 const sourceErrors = {};
 let xtbTransactions = [];
+let etherfiSpendTransactions = [];
 async function captureSource(source, loader) {
   try { return await loader(); }
   catch (error) {
@@ -419,9 +466,13 @@ if (shouldRun("xtb")) {
     xtbTransactions = xtb.transactions;
   }
 }
+if (shouldRun("etherfi") && process.env.ETHERFI_CSV_PATH?.trim()) {
+  const result = await captureSource("etherfi", () => loadEtherfiSpend(process.env.ETHERFI_CSV_PATH.trim()));
+  if (result) etherfiSpendTransactions = result;
+}
 
 if (dryRun) {
-  console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length }, null, 2));
+  console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length }, null, 2));
   process.exit(0);
 }
 
@@ -533,6 +584,18 @@ if (xtbTransactions.length) {
   }
 }
 
+if (etherfiSpendTransactions.length) {
+  const rows = etherfiSpendTransactions.map((transaction) => ({ owner_id: ownerId, ...transaction }));
+  for (let index = 0; index < rows.length; index += 100) {
+    await supabase("/rest/v1/spend_transactions?on_conflict=owner_id,source,external_ref", { method: "POST", body: rows.slice(index, index + 100), prefer: "resolution=merge-duplicates,return=minimal" });
+  }
+}
+
+if (!needsPortfolioSync) {
+  console.log(JSON.stringify({ as_of: now, source_errors: sourceErrors, etherfi_spend_records: etherfiSpendTransactions.length }, null, 2));
+  process.exit(0);
+}
+
 for (const update of [
   { key: "india:inr", currency: "INR" },
   { key: "gbp:cash", currency: "GBP" },
@@ -581,4 +644,4 @@ const currentSnapshotKeys = new Set(positionSnapshots.map((position) => position
 for (const stale of existingSnapshots.filter((position) => !currentSnapshotKeys.has(position.source_key))) {
   await supabase(`/rest/v1/position_snapshots?id=eq.${stale.id}`, { method: "DELETE" });
 }
-console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, snapshot_positions: positionSnapshots.length, portfolio: totals }, null, 2));
+console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length, snapshot_positions: positionSnapshots.length, portfolio: totals }, null, 2));
