@@ -332,6 +332,7 @@ function Dashboard({ session }: { session: Session }) {
   const [expandedDigital, setExpandedDigital] = useState<string | null>(null)
   const [expandedEquity, setExpandedEquity] = useState<string | null>(null)
   const [selectedAllocation, setSelectedAllocation] = useState<AssetClass | null>(null)
+  const [selectedBrokerDetail, setSelectedBrokerDetail] = useState<{ symbol: string; venue: string } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -468,6 +469,9 @@ function Dashboard({ session }: { session: Session }) {
     })
     return grouped
   }, [brokerageTransactions])
+  const selectedBrokerTransactions = selectedBrokerDetail
+    ? (brokerageByAsset.get(selectedBrokerDetail.symbol) || []).filter((transaction) => transaction.account && platformIdentity(transaction.account) === selectedBrokerDetail.venue)
+    : []
   const cryptoHistory = useMemo(() => {
     const grouped = new Map<string, { date: string; total: number; platforms: Map<string, number> }>()
     positionSnapshots.forEach((snapshot) => {
@@ -603,17 +607,17 @@ function Dashboard({ session }: { session: Session }) {
                   <div className="equity-columns"><span>Asset / venue split</span><span>Avg buy</span><span>Value</span><span>P/L</span><span>Allocation</span></div>
                   <div className="asset-rows equity-rows">{equityExposure.map((asset) => {
                     const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
-                    const transactions = brokerageByAsset.get(asset.symbol) || []
                     const open = expandedEquity === asset.symbol
                     const averageBuy = asset.pricedQuantity && asset.pricedCost ? asset.pricedCost / asset.pricedQuantity : null
                     const pnl = asset.pricedValue - asset.pricedCost
                     const hasCost = asset.pricedQuantity > 0
                     return <div className={`expandable-asset ${open ? 'open' : ''}`} key={asset.symbol}>
                       <button onClick={() => setExpandedEquity(open ? null : asset.symbol)}><ChevronRight size={13} /><span className="symbol-cell"><strong>{asset.symbol}</strong><small>{details.map(([name, value]) => `${name} ${((value.value / asset.value) * 100).toFixed(0)}%`).join(' · ')}</small></span><span>{averageBuy == null ? '—' : formatMoney(averageBuy)}</span><b>{formatMoney(asset.value)}</b><span className={hasCost ? (pnl >= 0 ? 'asset-pnl value-positive' : 'asset-pnl value-negative') : 'asset-pnl'}>{hasCost ? `${pnl >= 0 ? '+' : ''}${formatMoney(pnl)}` : '—'}</span><em>{equities ? ((asset.value / equities) * 100).toFixed(1) : '0.0'}%</em></button>
-                      {open && <div className="equity-detail"><div className="asset-breakdown equity-breakdown">{details.map(([name, detail]) => { const detailPnl = detail.value - detail.costBasis; return <div key={name}><span>{name}</span><strong>{formatAmount(detail.quantity)} shares</strong><small>{detail.costBasis ? `Avg ${formatMoney(detail.costBasis / detail.quantity)}` : 'Average cost pending'}</small><b>{formatMoney(detail.value)}</b><em className={detail.costBasis ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detail.costBasis ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}</em></div> })}</div><div className="transaction-history"><div><strong>Transaction history</strong><small>{transactions.length ? `${transactions.length} XTB records` : 'No trade-level history imported'}</small></div>{transactions.length ? transactions.slice(0, 10).map((transaction) => <section key={transaction.id}><time>{new Date(transaction.event_time).toLocaleDateString()}</time><span><strong>{transaction.account?.institution || 'XTB'} · {transaction.event_type}</strong><small>{transaction.quantity ? `${formatAmount(Number(transaction.quantity))} @ ${transaction.price_usd ? formatMoney(Number(transaction.price_usd)) : '—'}` : 'Cash operation'}</small></span><b>{transaction.amount_usd == null ? '—' : formatMoney(Number(transaction.amount_usd))}</b>{transaction.realized_pnl_usd == null ? <em>—</em> : <em className={Number(transaction.realized_pnl_usd) >= 0 ? 'value-positive' : 'value-negative'}>{Number(transaction.realized_pnl_usd) >= 0 ? '+' : ''}{formatMoney(Number(transaction.realized_pnl_usd))}</em>}</section>) : <p>Wio supplies current shares and cost basis, but its screenshots do not contain the individual buy/sell ledger.</p>}</div></div>}
+                      {open && <div className="equity-detail"><div className="asset-breakdown equity-breakdown">{details.map(([name, detail]) => { const detailPnl = detail.value - detail.costBasis; const venueTransactions = (brokerageByAsset.get(asset.symbol) || []).filter((transaction) => transaction.account && platformIdentity(transaction.account) === name); return <button key={name} onClick={() => venueTransactions.length && setSelectedBrokerDetail({ symbol: asset.symbol, venue: name })} disabled={!venueTransactions.length}><span>{name}<small>{venueTransactions.length ? `${venueTransactions.length} transactions · click to open` : 'Position detail only'}</small></span><strong>{formatAmount(detail.quantity)} shares</strong><small>{detail.costBasis ? `Avg ${formatMoney(detail.costBasis / detail.quantity)}` : 'Average cost pending'}</small><b>{formatMoney(detail.value)}</b><em className={detail.costBasis ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detail.costBasis ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}</em><ChevronRight size={12} /></button> })}</div></div>}
                     </div>
                   })}</div>
                   <div className="equity-footer"><span>{equityExposure.length} securities · {formatMoney(stockCostBasis)} known cost</span><span>{brokerageTransactions.length ? `${formatMoney(realizedXtb)} XTB realized` : 'Realized P/L unavailable'}</span></div>
+                  {selectedBrokerDetail && <div className="broker-drilldown"><div className="drilldown-head"><span><i /><strong>{selectedBrokerDetail.symbol} · {selectedBrokerDetail.venue}</strong><small>{selectedBrokerTransactions.length} transaction records</small></span><button onClick={() => setSelectedBrokerDetail(null)} aria-label="Close transaction history"><X size={14} /></button></div><div className="broker-transaction-head"><span>Date</span><span>Transaction</span><span>Quantity / price</span><span>Amount</span><span>Realized P/L</span></div><div className="broker-transaction-list">{selectedBrokerTransactions.map((transaction) => <section key={transaction.id}><time>{new Date(transaction.event_time).toLocaleDateString()}</time><span><strong>{transaction.event_type}</strong><small>{transaction.asset?.name || transaction.asset?.symbol || selectedBrokerDetail.symbol}</small></span><span>{transaction.quantity ? `${formatAmount(Number(transaction.quantity))} @ ${transaction.price_usd ? formatMoney(Number(transaction.price_usd)) : '—'}` : 'Cash operation'}</span><b>{transaction.amount_usd == null ? '—' : formatMoney(Number(transaction.amount_usd))}</b>{transaction.realized_pnl_usd == null ? <em>—</em> : <em className={Number(transaction.realized_pnl_usd) >= 0 ? 'value-positive' : 'value-negative'}>{Number(transaction.realized_pnl_usd) >= 0 ? '+' : ''}{formatMoney(Number(transaction.realized_pnl_usd))}</em>}</section>)}</div></div>}
                 </article>
 
                 <aside className="panel overview-spending">

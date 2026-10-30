@@ -233,7 +233,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .overview-platforms { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; }
 .overview-allocation { grid-column: 1; grid-row: 2; }
 .overview-digital { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; }
-.overview-equities { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; }
+.overview-equities { grid-column: 2; grid-row: 2; display: flex; flex-direction: column; position: relative; }
 .overview-spending { grid-column: 3; grid-row: 1 / 3; display: flex; flex-direction: column; }
 
 .platform-list { min-height: 0; overflow: hidden; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; border-top: 1px solid var(--line); }
@@ -306,8 +306,16 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .equity-rows .expandable-asset > button { grid-template-columns: 13px minmax(130px, 1fr) 55px 65px 62px 50px; }
 .equity-rows .expandable-asset > button > span:not(.symbol-cell) { text-align: right; font-size: 8px; }
 .equity-detail { padding-bottom: 7px; }
-.equity-breakdown > div { grid-template-columns: minmax(70px, 1fr) 80px 90px 62px 62px; align-items: center; }
+.equity-breakdown > button { width: 100%; display: grid; grid-template-columns: minmax(90px, 1fr) 80px 90px 62px 62px 12px; gap: 7px; align-items: center; padding: 5px 0; border: 0; border-bottom: 1px solid #1d2429; background: transparent; color: #7e8991; text-align: left; font-size: 7px; }
+.equity-breakdown > button:not(:disabled):hover { background: #12181c; }
+.equity-breakdown > button:disabled { cursor: default; opacity: 1; }
+.equity-breakdown > button > span { display: grid; gap: 1px; }
+.equity-breakdown > button > span > small { color: #59656d; font-size: 6px; }
+.equity-breakdown > button > svg { color: #5f9f80; }
+.equity-breakdown > button:disabled > svg { visibility: hidden; }
 .equity-breakdown b, .equity-breakdown em { font-size: 7px; text-align: right; }
+.equity-breakdown em.value-positive { color: var(--green); }
+.equity-breakdown em.value-negative { color: var(--red); }
 .transaction-history { margin: 5px 0 3px 21px; padding: 7px 8px; background: #0b1014; border: 1px solid #20292f; border-radius: 6px; }
 .transaction-history > div:first-child { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 3px; }
 .transaction-history > div:first-child strong { color: #bfc8cc; font-size: 8px; }
@@ -319,6 +327,22 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .transaction-history section > span small { color: #616d75; font-size: 7px; }
 .transaction-history section > b, .transaction-history section > em { color: #cdd5d9; font: normal 7px 'DM Mono', monospace; text-align: right; }
 .transaction-history > p { margin: 7px 0 1px; color: #657179; font-size: 7px; line-height: 1.5; }
+.broker-drilldown { position: absolute; inset: 0; z-index: 5; display: flex; flex-direction: column; padding: 13px; background: rgba(13,18,22,.99); backdrop-filter: blur(8px); }
+.broker-drilldown .drilldown-head > span { grid-template-columns: 8px 1fr; }
+.broker-drilldown .drilldown-head i { background: #68d3a0; }
+.broker-transaction-head, .broker-transaction-list section { display: grid; grid-template-columns: 64px minmax(105px, 1fr) minmax(95px, .8fr) 60px 62px; gap: 8px; align-items: center; }
+.broker-transaction-head { padding: 9px 3px 6px; color: #56626a; font: 6px 'DM Mono', monospace; text-transform: uppercase; }
+.broker-transaction-head span:nth-child(n+3) { text-align: right; }
+.broker-transaction-list { min-height: 0; flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2a353c transparent; border-top: 1px solid var(--line); }
+.broker-transaction-list section { min-height: 35px; padding: 5px 3px; border-bottom: 1px solid #1d2429; color: #808c94; font-size: 7px; }
+.broker-transaction-list time { color: #637078; font: 7px 'DM Mono', monospace; }
+.broker-transaction-list section > span:first-of-type { min-width: 0; display: grid; gap: 1px; }
+.broker-transaction-list section > span:first-of-type strong { color: #c9d1d5; font-size: 7px; }
+.broker-transaction-list section > span:first-of-type small { color: #58646c; font-size: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.broker-transaction-list section > span:nth-of-type(2), .broker-transaction-list b, .broker-transaction-list em { text-align: right; }
+.broker-transaction-list b, .broker-transaction-list em { color: #cbd3d7; font: normal 7px 'DM Mono', monospace; }
+.broker-transaction-list em.value-positive { color: var(--green); }
+.broker-transaction-list em.value-negative { color: var(--red); }
 .equity-footer { flex: 0 0 auto; display: flex; justify-content: space-between; padding-top: 6px; color: #59656d; font-size: 7px; }
 
 .overview-spending .panel-heading > span { color: #d6dfda; background: #18231e; }
