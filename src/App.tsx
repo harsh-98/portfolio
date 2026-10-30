@@ -96,8 +96,19 @@ const money = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 })
 
+const moneyCents = new Intl.NumberFormat('en-US', {
+  style: 'currency',
+  currency: 'USD',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+})
+
 function formatMoney(value: number) {
   return money.format(Number.isFinite(value) ? value : 0)
+}
+
+function formatMoneyCents(value: number) {
+  return moneyCents.format(Number.isFinite(value) ? value : 0)
 }
 
 function formatAmount(value: number) {
@@ -527,7 +538,7 @@ function Dashboard({ session }: { session: Session }) {
   })), [equities, equityExposure])
   const equityColumns = useMemo<ColDef<EquityGridRow>[]>(() => [
     { field: 'symbol', headerName: 'Asset / venue', minWidth: 155, flex: 1, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
-    { field: 'averageBuy', headerName: 'Avg buy', minWidth: 85, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoney(Number(value)) },
+    { field: 'averageBuy', headerName: 'Avg buy', minWidth: 85, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
     { field: 'value', headerName: 'Value', minWidth: 95, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
     { field: 'pnl', headerName: 'P/L', minWidth: 95, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'allocation', headerName: 'Alloc.', minWidth: 76, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
@@ -559,7 +570,7 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'eventType', headerName: 'Transaction', minWidth: 125, filter: 'agTextColumnFilter' },
     { field: 'asset', headerName: 'Asset', minWidth: 150, flex: 1, filter: 'agTextColumnFilter' },
     { field: 'quantity', headerName: 'Quantity', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatAmount(Number(value)) },
-    { field: 'price', headerName: 'Price', minWidth: 100, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoney(Number(value)) },
+    { field: 'price', headerName: 'Price', minWidth: 100, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
     { field: 'amount', headerName: 'Amount', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoney(Number(value)) },
     { field: 'realizedPnl', headerName: 'Realized P/L', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
   ], [])
@@ -594,9 +605,13 @@ function Dashboard({ session }: { session: Session }) {
     ? [...latestCryptoPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, start: firstCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
     : []
   const realizedXtb = brokerageTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
-  const recentSpend = spendTransactions.filter((transaction) => new Date(transaction.occurred_at).getTime() >= Date.now() - 30 * 86_400_000 && transaction.status !== 'declined' && ['purchase', 'refund'].includes(transaction.transaction_type))
-  const recentSpendTotal = recentSpend.reduce((sum, transaction) => sum + Number(transaction.amount_usd), 0)
-  const spendBySource = [...recentSpend.reduce((grouped, transaction) => grouped.set(transaction.source, (grouped.get(transaction.source) || 0) + Number(transaction.amount_usd)), new Map<string, number>()).entries()].sort((a, b) => b[1] - a[1])
+  const etherfiBalances = positions.filter((position) => /ether\.?fi/i.test(`${position.account.name} ${position.account.institution}`)).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
+  const etherfiBalanceTotal = etherfiBalances.reduce((sum, position) => sum + Number(position.value_usd), 0)
+  const recentEtherfiActivity = spendTransactions.filter((transaction) => transaction.source === 'ether.fi' && new Date(transaction.occurred_at).getTime() >= Date.now() - 30 * 86_400_000 && String(transaction.status).trim().toLowerCase() === 'cleared')
+  const recentPurchases = recentEtherfiActivity.filter((transaction) => transaction.transaction_type === 'purchase')
+  const recentRefunds = recentEtherfiActivity.filter((transaction) => transaction.transaction_type === 'refund')
+  const recentSpendTotal = recentPurchases.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
+  const recentRefundTotal = recentRefunds.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
   const latestSnapshot = snapshots.length ? snapshots[snapshots.length - 1] : null
   const previous = snapshots.length > 1 ? snapshots[snapshots.length - 2].total_value_usd : null
   const change = previous ? total - previous : 0
@@ -632,7 +647,7 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'account', headerName: 'Account', minWidth: 170, flex: 1, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: HoldingGridRow }) => data ? <span className="grid-asset"><strong>{data.account}</strong><small>{data.institution}</small></span> : null },
     { field: 'assetClass', headerName: 'Class', minWidth: 120, filter: 'agTextColumnFilter' },
     { field: 'quantity', headerName: 'Quantity', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatAmount(Number(value)) },
-    { field: 'price', headerName: 'Price', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
+    { field: 'price', headerName: 'Price', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoneyCents(Number(value)) },
     { field: 'value', headerName: 'Value', minWidth: 115, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
     { field: 'pnl', headerName: 'P/L', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'weight', headerName: 'Weight', minWidth: 100, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(2)}%` },
@@ -724,13 +739,16 @@ function Dashboard({ session }: { session: Session }) {
                   <div className="panel-heading"><div><p className="eyebrow">STOCKS &amp; ETFS</p><h2>{formatMoney(equities)} total</h2></div><div className="pnl-summary"><small>Total P/L</small><strong className={stockPnl >= 0 ? 'value-positive' : 'value-negative'}>{stockPnl >= 0 ? '+' : ''}{formatMoney(stockPnl)}</strong></div></div>
                   <div className="equity-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={equityGridRows} columnDefs={equityColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} getRowId={({ data }) => data.symbol} rowHeight={34} headerHeight={28} floatingFiltersHeight={25} onRowClicked={({ data }) => data && setExpandedEquity(data.symbol)} /></div>
                   <div className="equity-footer"><span>{equityExposure.length} securities · {formatMoney(stockCostBasis)} known cost</span><span>{brokerageTransactions.length ? `${formatMoney(realizedXtb)} XTB realized` : 'Realized P/L unavailable'}</span></div>
-                  {expandedEquity && (() => { const asset = equityExposure.find((item) => item.symbol === expandedEquity); if (!asset) return null; const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value); return <div className="equity-drilldown"><div className="drilldown-head"><span><i /><strong>{asset.symbol} · {asset.name}</strong><small>Position by platform · choose a venue for transaction history</small></span><button onClick={() => setExpandedEquity(null)} aria-label="Close position detail"><X size={14} /></button></div><div className="asset-breakdown equity-breakdown">{details.map(([name, detail]) => { const detailPnl = detail.value - detail.costBasis; const venueTransactions = (brokerageByAsset.get(asset.symbol) || []).filter((transaction) => transaction.account && platformIdentity(transaction.account) === name); return <button key={name} onClick={() => venueTransactions.length && setSelectedBrokerDetail({ symbol: asset.symbol, venue: name })} disabled={!venueTransactions.length}><span>{name}<small>{venueTransactions.length ? `${venueTransactions.length} transactions · click to open` : 'Position detail only'}</small></span><strong>{formatAmount(detail.quantity)} shares</strong><small>{detail.costBasis ? `Avg ${formatMoney(detail.costBasis / detail.quantity)}` : 'Average cost pending'}</small><b>{formatMoney(detail.value)}</b><em className={detail.costBasis ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detail.costBasis ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}</em><ChevronRight size={12} /></button> })}</div></div> })()}
+                  {expandedEquity && (() => { const asset = equityExposure.find((item) => item.symbol === expandedEquity); if (!asset) return null; const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value); return <div className="equity-drilldown"><div className="drilldown-head"><span><i /><strong>{asset.symbol} · {asset.name}</strong><small>Position by platform · choose a venue for transaction history</small></span><button onClick={() => setExpandedEquity(null)} aria-label="Close position detail"><X size={14} /></button></div><div className="asset-breakdown equity-breakdown">{details.map(([name, detail]) => { const detailPnl = detail.value - detail.costBasis; const venueTransactions = (brokerageByAsset.get(asset.symbol) || []).filter((transaction) => transaction.account && platformIdentity(transaction.account) === name); return <button key={name} onClick={() => venueTransactions.length && setSelectedBrokerDetail({ symbol: asset.symbol, venue: name })} disabled={!venueTransactions.length}><span>{name}<small>{venueTransactions.length ? `${venueTransactions.length} transactions · click to open` : 'Position detail only'}</small></span><strong>{formatAmount(detail.quantity)} shares</strong><small>{detail.costBasis ? `Avg ${formatMoneyCents(detail.costBasis / detail.quantity)}` : 'Average cost pending'}</small><b>{formatMoney(detail.value)}</b><em className={detail.costBasis ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detail.costBasis ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}</em><ChevronRight size={12} /></button> })}</div></div> })()}
                   {selectedBrokerDetail && <div className={`broker-drilldown ${brokerFullscreen ? 'fullscreen' : ''}`}><div className="drilldown-head"><span><i /><strong>{selectedBrokerDetail.symbol} · {selectedBrokerDetail.venue}</strong><small>{selectedBrokerTransactions.length} records · sort any column or use the filters</small></span><div className="drilldown-actions"><button onClick={() => setBrokerFullscreen((value) => !value)} aria-label={brokerFullscreen ? 'Exit full screen' : 'Maximize transaction history'} title={brokerFullscreen ? 'Exit full screen' : 'Maximize'}>{brokerFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button><button onClick={() => { setSelectedBrokerDetail(null); setBrokerFullscreen(false) }} aria-label="Close transaction history"><X size={14} /></button></div></div><div className="broker-grid"><AgGridReact<TransactionGridRow> theme={portfolioGridTheme} rowData={transactionGridRows} columnDefs={transactionColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} getRowId={({ data }) => data.id} rowHeight={34} headerHeight={31} floatingFiltersHeight={29} /></div></div>}
                 </article>
 
                 <aside className="panel overview-spending">
-                  <div className="panel-heading"><div><p className="eyebrow">LAST 30 DAYS</p><h2>Spending</h2></div><span>{formatMoney(recentSpendTotal)}</span></div>
-                  {spendTransactions.length ? <><div className="spend-source-list">{spendBySource.map(([source, value]) => <div key={source}><span>{source}</span><strong>{formatMoney(value)}</strong></div>)}</div><div className="spend-divider" /><div className="recent-spend-list">{recentSpend.slice(0, 10).map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card transaction'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b>{formatMoney(Math.abs(Number(transaction.amount_usd)))}</b></div>)}</div></> : <div className="spend-empty"><span>—</span><strong>No spending imported</strong><p>Ether.fi, KAST and Ethena transactions will appear here after their exports are added.</p></div>}
+                  <div className="panel-heading"><div><p className="eyebrow">ETHER.FI · LAST 30 DAYS</p><h2>Card &amp; balances</h2></div><span>{formatMoney(etherfiBalanceTotal)}</span></div>
+                  <div className="card-activity-summary"><div><span>Balance</span><strong>{formatMoneyCents(etherfiBalanceTotal)}</strong></div><div><span>Cleared spend</span><strong>{formatMoneyCents(recentSpendTotal)}</strong></div><div><span>Refunds</span><strong className="value-positive">+{formatMoneyCents(recentRefundTotal)}</strong></div></div>
+                  <div className="spend-section"><div className="spend-section-title"><span>Balances</span><small>{etherfiBalances.length}</small></div><div className="balance-list">{etherfiBalances.map((position) => <div key={position.id}><span><strong>{position.asset.symbol}</strong><small>{position.account.name}</small></span><b>{formatMoney(Number(position.value_usd))}</b></div>)}</div></div>
+                  <div className="spend-section activity-section"><div className="spend-section-title"><span>Cleared spending</span><small>{recentPurchases.length}</small></div><div className="recent-spend-list">{recentPurchases.slice(0, 6).map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card transaction'}</strong><small>{new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b>{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentPurchases.length && <p className="activity-empty">No cleared spending in this period.</p>}</div></div>
+                  <div className="spend-section activity-section refund-section"><div className="spend-section-title"><span>Refunds</span><small>{recentRefunds.length}</small></div><div className="recent-spend-list">{recentRefunds.slice(0, 5).map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card refund'}</strong><small>{new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentRefunds.length && <p className="activity-empty">No refunds in this period.</p>}</div></div>
                 </aside>
               </div>
             </section>

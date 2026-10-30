@@ -364,6 +364,22 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .grid-pnl-negative { color: var(--red); font-weight: 600; }
 
 .overview-spending .panel-heading > span { color: #d6dfda; background: #18231e; }
+.card-activity-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin-bottom: 8px; }
+.card-activity-summary > div { min-width: 0; display: grid; gap: 2px; padding: 7px; border: 1px solid #20292f; border-radius: 6px; background: #0d1216; }
+.card-activity-summary span { color: #647079; font-size: 6px; text-transform: uppercase; letter-spacing: .06em; }
+.card-activity-summary strong { color: #dce3e6; font-size: 9px; overflow: hidden; text-overflow: ellipsis; }
+.spend-section { min-height: 0; margin-top: 4px; }
+.spend-section-title { display: flex; align-items: center; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #20282e; color: #77838b; font-size: 7px; text-transform: uppercase; letter-spacing: .08em; }
+.spend-section-title small { color: #536068; font: 6px 'DM Mono', monospace; }
+.balance-list > div { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
+.balance-list span { display: grid; gap: 1px; }
+.balance-list strong { color: #d7dfe2; font-size: 8px; }
+.balance-list small { color: #5f6b73; font-size: 6px; }
+.balance-list b { color: #e8edef; font-size: 9px; }
+.activity-section { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.activity-section .recent-spend-list { overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2a353c transparent; }
+.refund-section { flex: .75; }
+.activity-empty { margin: 10px 0; color: #536068; font-size: 7px; text-align: center; }
 .spend-source-list { display: grid; grid-template-columns: 1fr; }
 .spend-source-list > div { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #1e252b; color: #828e96; font-size: 8px; }
 .spend-source-list strong { color: #dce3e6; }
