@@ -74,6 +74,7 @@ type EquityGridRow = {
   averageBuy: number | null
   value: number
   pnl: number | null
+  realizedPnl: number | null
   allocation: number
 }
 
@@ -538,14 +539,18 @@ function Dashboard({ session }: { session: Session }) {
     averageBuy: asset.pricedQuantity && asset.pricedCost ? asset.pricedCost / asset.pricedQuantity : null,
     value: asset.value,
     pnl: asset.pricedQuantity ? asset.pricedValue - asset.pricedCost : null,
+    realizedPnl: brokerageTransactions.some((transaction) => transaction.asset?.symbol && canonicalEquitySymbol(transaction.asset.symbol) === asset.symbol && transaction.realized_pnl_usd != null)
+      ? brokerageTransactions.filter((transaction) => transaction.asset?.symbol && canonicalEquitySymbol(transaction.asset.symbol) === asset.symbol).reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
+      : null,
     allocation: equities ? (asset.value / equities) * 100 : 0,
-  })), [equities, equityExposure])
+  })), [brokerageTransactions, equities, equityExposure])
   const equityColumns = useMemo<ColDef<EquityGridRow>[]>(() => [
-    { field: 'symbol', headerName: 'Asset / venue', minWidth: 125, flex: 2.1, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
-    { field: 'averageBuy', headerName: 'Avg buy', minWidth: 68, flex: 1, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
-    { field: 'value', headerName: 'Value', minWidth: 72, flex: 1, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
-    { field: 'pnl', headerName: 'P/L', minWidth: 72, flex: 1, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
-    { field: 'allocation', headerName: 'Alloc.', minWidth: 55, flex: .7, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
+    { field: 'symbol', headerName: 'Asset / venue', minWidth: 105, flex: 1.8, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
+    { field: 'averageBuy', headerName: 'Avg buy', minWidth: 60, flex: .8, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
+    { field: 'value', headerName: 'Value', minWidth: 65, flex: .9, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
+    { field: 'pnl', headerName: 'Unrealized', minWidth: 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
+    { field: 'realizedPnl', headerName: 'Realized', minWidth: 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
+    { field: 'allocation', headerName: 'Alloc.', minWidth: 50, flex: .6, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
   ], [])
   const brokerageByAsset = useMemo(() => {
     const grouped = new Map<string, BrokerageTransaction[]>()
