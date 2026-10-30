@@ -9,6 +9,7 @@ import pdfParse from "pdf-parse/lib/pdf-parse.js";
 
 const args = new Set(process.argv.slice(2));
 const dryRun = args.has("--dry-run");
+const debug = args.has("--debug");
 const onlyArg = process.argv.find((arg) => arg.startsWith("--only="));
 const only = onlyArg ? new Set(onlyArg.slice(7).split(",")) : null;
 const shouldRun = (source) => !only || only.has(source);
@@ -472,7 +473,7 @@ async function loadXtb(sourcePath) {
     const transactions = [];
     for (const row of cashOps.slice(cashHeader + 1)) {
       if (!number(row[4]) || !row[0]) continue;
-      const match = String(row[7] ?? "").match(/(?:OPEN|CLOSE) (?:BUY|SELL) (?:\S+ )?([\d.]+) @ ([\d.]+)/i);
+      const match = String(row[7] ?? "").match(/(?:OPEN|CLOSE) (?:BUY|SELL) (?:[A-Z][A-Z0-9.-]* )?([\d.]+)(?:\/[\d.]+)? @ ([\d.]+)/i);
       transactions.push({
         external_ref: `cash:${row[6] || hash(row.join("|"))}`,
         account,
@@ -483,7 +484,7 @@ async function loadXtb(sourcePath) {
         price_usd: match ? number(match[2]) : null,
         amount_usd: round(number(row[5])),
         realized_pnl_usd: null,
-        metadata: { category: row[3] || null, product: row[8] || null },
+        metadata: { category: row[3] || null, product: row[8] || null, raw_description: row[7] || null },
       });
     }
     const closed = sheets["Closed Positions"] ?? [];
@@ -575,7 +576,7 @@ if (shouldRun("kast") && (process.env.KAST_PDF_PATHS?.trim() || process.env.KAST
 }
 
 if (dryRun) {
-  console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length, kast_spend: summarizeSpend(kastSpendTransactions) }, null, 2));
+  console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length, kast_spend: summarizeSpend(kastSpendTransactions), ...(debug ? { xtb_missing_quantity_samples: xtbTransactions.filter((transaction) => transaction.quantity == null && /stock (sell|purchase)/i.test(transaction.event_type)).slice(0, 40).map((transaction) => ({ event_type: transaction.event_type, amount_usd: transaction.amount_usd, raw_description: transaction.metadata.raw_description, asset: transaction.asset?.symbol })) } : {}) }, null, 2));
   process.exit(0);
 }
 
