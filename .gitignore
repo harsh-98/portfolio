@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+.DS_Store
+*.sqlite
+*.sqlite3
+*.db
+backups/
+imports/
+reports/
+.supabase/
+supabase/.temp/
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
