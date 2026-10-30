@@ -199,6 +199,138 @@ async function loadRabby(addresses) {
   return positions;
 }
 
+async function hyperliquidInfo(body) {
+  return fetchJson("https://api.hyperliquid.xyz/info", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function loadHyperliquid(addresses) {
+  const [[spotMeta], mids, reserveRows] = await Promise.all([
+    hyperliquidInfo({ type: "spotMetaAndAssetCtxs" }),
+    hyperliquidInfo({ type: "allMids" }),
+    hyperliquidInfo({ type: "allBorrowLendReserveStates" }),
+  ]);
+  const tokens = new Map((spotMeta.tokens ?? []).map((token) => [number(token.index), token]));
+  const prices = new Map([[0, 1]]);
+  for (const market of spotMeta.universe ?? []) {
+    const [baseToken, quoteToken] = market.tokens ?? [];
+    if (number(quoteToken) !== 0) continue;
+    const price = number(mids[market.name]);
+    if (price) prices.set(number(baseToken), price);
+  }
+  const reserves = new Map((reserveRows ?? []).map(([token, state]) => [number(token), state]));
+  const positions = [];
+  const classify = (symbol) => {
+    const normalized = String(symbol).toUpperCase();
+    if (["USDC", "USDT", "USDH", "USDE", "DAI"].includes(normalized)) return "stablecoin";
+    if (["XAUT", "XAUT0", "PAXG"].includes(normalized)) return "gold";
+    return "crypto";
+  };
+  const tokenPrice = (tokenIndex) => prices.get(number(tokenIndex)) || number(reserves.get(number(tokenIndex))?.oraclePx);
+  const tokenAsset = (tokenIndex, suffix = "") => {
+    const token = tokens.get(number(tokenIndex));
+    const symbol = String(token?.name || `TOKEN-${tokenIndex}`).toUpperCase();
+    return {
+      symbol: `${symbol}${suffix}`.slice(0, 32),
+      name: `${token?.fullName || symbol}${suffix ? ` ${suffix.replace("-", "").toLowerCase()}` : ""}`,
+      asset_class: suffix === "-DEBT" ? "liability" : classify(symbol),
+      currency: "USD",
+      network: "hyperliquid",
+      contract_address: token?.evmContract?.address || token?.tokenId || null,
+      metadata: { hyperliquid_token_index: number(tokenIndex) },
+    };
+  };
+  for (const address of addresses) {
+    const walletLabel = `${address.slice(0, 6)}…${address.slice(-4)}`;
+    const [spot, staking, lending, perps, vaults] = await Promise.all([
+      hyperliquidInfo({ type: "spotClearinghouseState", user: address }),
+      hyperliquidInfo({ type: "delegatorSummary", user: address }),
+      hyperliquidInfo({ type: "borrowLendUserState", user: address }),
+      hyperliquidInfo({ type: "clearinghouseState", user: address }),
+      hyperliquidInfo({ type: "userVaultEquities", user: address }),
+    ]);
+    const spotAccount = { name: `Hyperliquid · ${address}`, institution: "Hyperliquid", account_type: "wallet", currency: "USD", source: "hyperliquid" };
+    for (const balance of spot.balances ?? []) {
+      const quantity = number(balance.total);
+      const price = tokenPrice(balance.token);
+      const value = quantity * price;
+      if (!quantity || value < 0.01) continue;
+      positions.push({
+        account: spotAccount,
+        asset: tokenAsset(balance.token),
+        quantity,
+        price_usd: price,
+        value_usd: round(value),
+        cost_basis_usd: number(balance.entryNtl) || null,
+        source_key: `hyperliquid:${hash(address)}:spot:${number(balance.token)}`,
+        metadata: { wallet: walletLabel, balance_type: "spot", held_quantity: number(balance.hold) },
+      });
+    }
+    const stakedHype = number(staking.delegated) + number(staking.undelegated) + number(staking.totalPendingWithdrawal);
+    const hypePrice = tokenPrice(150);
+    if (stakedHype && hypePrice) positions.push({
+      account: { ...spotAccount, name: `Hyperliquid Staking · ${address}` },
+      asset: tokenAsset(150),
+      quantity: stakedHype,
+      price_usd: hypePrice,
+      value_usd: round(stakedHype * hypePrice),
+      source_key: `hyperliquid:${hash(address)}:staking:hype`,
+      metadata: { wallet: walletLabel, balance_type: "staking", delegated: number(staking.delegated), undelegated: number(staking.undelegated), pending_withdrawal: number(staking.totalPendingWithdrawal) },
+    });
+    for (const [tokenIndex, state] of lending.tokenToState ?? []) {
+      const price = tokenPrice(tokenIndex);
+      const supplied = number(state.supply?.value);
+      const borrowed = number(state.borrow?.value);
+      if (supplied && price) positions.push({
+        account: { ...spotAccount, name: `Hyperliquid Lending · ${address}` },
+        asset: tokenAsset(tokenIndex),
+        quantity: supplied,
+        price_usd: price,
+        value_usd: round(supplied * price),
+        cost_basis_usd: number(state.supply?.basis) ? round(number(state.supply.basis) * price) : null,
+        source_key: `hyperliquid:${hash(address)}:lending:supply:${number(tokenIndex)}`,
+        metadata: { wallet: walletLabel, balance_type: "lending_supply" },
+      });
+      if (borrowed && price) positions.push({
+        account: { ...spotAccount, name: `Hyperliquid Lending · ${address}` },
+        asset: tokenAsset(tokenIndex, "-DEBT"),
+        quantity: -borrowed,
+        price_usd: price,
+        value_usd: round(-borrowed * price),
+        source_key: `hyperliquid:${hash(address)}:lending:borrow:${number(tokenIndex)}`,
+        metadata: { wallet: walletLabel, balance_type: "lending_borrow" },
+      });
+    }
+    const perpEquity = number(perps.marginSummary?.accountValue);
+    if (perpEquity >= 0.01) positions.push({
+      account: { ...spotAccount, name: `Hyperliquid Perps · ${address}` },
+      asset: { symbol: "PERP-EQUITY", name: "Perpetuals account equity", asset_class: "alternative", currency: "USD", network: "hyperliquid", contract_address: null, metadata: {} },
+      quantity: perpEquity,
+      price_usd: 1,
+      value_usd: round(perpEquity),
+      source_key: `hyperliquid:${hash(address)}:perps:equity`,
+      metadata: { wallet: walletLabel, balance_type: "perpetuals_equity", open_positions: perps.assetPositions?.length ?? 0 },
+    });
+    for (const vault of vaults ?? []) {
+      const equity = number(vault.equity);
+      if (equity < 0.01) continue;
+      positions.push({
+        account: { ...spotAccount, name: `Hyperliquid Vaults · ${address}` },
+        asset: { symbol: "VAULT-EQUITY", name: "Hyperliquid vault equity", asset_class: "alternative", currency: "USD", network: "hyperliquid", contract_address: vault.vaultAddress, metadata: {} },
+        quantity: equity,
+        price_usd: 1,
+        value_usd: round(equity),
+        source_key: `hyperliquid:${hash(address)}:vault:${hash(vault.vaultAddress)}`,
+        metadata: { wallet: walletLabel, balance_type: "vault", vault_address: vault.vaultAddress },
+      });
+    }
+  }
+  return positions;
+}
+
 function parseKeyFile(text) {
   return Object.fromEntries(text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#")).map((line) => {
     const index = line.indexOf("=");
@@ -340,6 +472,8 @@ async function loadEtherfiSpend(csvPath) {
         cashback_earned: value(row, "cashback earned") ? number(value(row, "cashback earned")) : null,
         cashback_currency: value(row, "cashback currency") || null,
         original_unit: originalCurrency && !/^[A-Z]{3}$/.test(originalCurrency) ? originalCurrency : null,
+        transaction_hash: value(row, "transaction hash") || value(row, "tx hash") || value(row, "tx_hash") || null,
+        explorer_url: value(row, "explorer url") || value(row, "transaction url") || null,
         import_file: path.basename(csvPath),
       },
     };
@@ -525,7 +659,7 @@ function summarizeSpend(transactions) {
   return { records: transactions.length, by_type: byType, months: [...months].sort() };
 }
 
-const portfolioSources = ["rabby", "binance", "wio", "wio-stocks", "xtb"];
+const portfolioSources = ["rabby", "hyperliquid", "binance", "wio", "wio-stocks", "xtb"];
 const needsPortfolioSync = !only || portfolioSources.some((source) => only.has(source));
 const fx = needsPortfolioSync ? await loadFx() : {};
 const sourcePositions = {};
@@ -543,6 +677,11 @@ async function captureSource(source, loader) {
 if (shouldRun("rabby")) {
   const result = await captureSource("rabby", () => loadRabby(required("PORTFOLIO_EVM_ADDRESSES").split(",").map((value) => value.trim()).filter(Boolean)));
   if (result) sourcePositions.rabby = result;
+}
+if (shouldRun("hyperliquid")) {
+  const addressList = process.env.PORTFOLIO_HYPERLIQUID_ADDRESSES?.trim() || required("PORTFOLIO_EVM_ADDRESSES");
+  const result = await captureSource("hyperliquid", () => loadHyperliquid(addressList.split(",").map((value) => value.trim()).filter(Boolean)));
+  if (result) sourcePositions.hyperliquid = result;
 }
 if (shouldRun("binance")) {
   const result = await captureSource("binance", () => loadBinance(process.env.BINANCE_KEY_FILE?.trim()));
@@ -576,7 +715,7 @@ if (shouldRun("kast") && (process.env.KAST_PDF_PATHS?.trim() || process.env.KAST
 }
 
 if (dryRun) {
-  console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length, kast_spend: summarizeSpend(kastSpendTransactions), ...(debug ? { xtb_missing_quantity_samples: xtbTransactions.filter((transaction) => transaction.quantity == null && /stock (sell|purchase)/i.test(transaction.event_type)).slice(0, 40).map((transaction) => ({ event_type: transaction.event_type, amount_usd: transaction.amount_usd, raw_description: transaction.metadata.raw_description, asset: transaction.asset?.symbol })) } : {}) }, null, 2));
+  console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length, kast_spend: summarizeSpend(kastSpendTransactions), ...(debug ? { current_asset_positions: Object.fromEntries(Object.entries(sourcePositions).map(([source, positions]) => [source, positions.filter((position) => Math.abs(position.value_usd) >= 100).map((position) => ({ account: position.account.name, symbol: position.asset.symbol, network: position.asset.network, quantity: position.quantity, price_usd: position.price_usd, value_usd: position.value_usd }))])), xtb_missing_quantity_samples: xtbTransactions.filter((transaction) => transaction.quantity == null && /stock (sell|purchase)/i.test(transaction.event_type)).slice(0, 40).map((transaction) => ({ event_type: transaction.event_type, amount_usd: transaction.amount_usd, raw_description: transaction.metadata.raw_description, asset: transaction.asset?.symbol })) } : {}) }, null, 2));
   process.exit(0);
 }
 

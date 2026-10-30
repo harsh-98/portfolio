@@ -427,6 +427,12 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .refund-section { flex: .75; }
 .cashback-section { flex: .75; }
 .activity-empty { margin: 10px 0; color: #536068; font-size: 7px; text-align: center; }
+.recent-spend-list > div > span > small { display: flex; align-items: center; gap: 4px; }
+.recent-spend-list small a { display: inline-flex; align-items: center; gap: 2px; color: #7ea98f; text-decoration: none; }
+.recent-spend-list small a:hover { color: var(--green); }
+.tx-type { padding: 1px 4px; border: 1px solid #303941; border-radius: 999px; color: #87939a; font-style: normal; font-size: 6px; line-height: 1.25; text-transform: uppercase; }
+.tx-type.cashback, .tx-type.refund { border-color: #28513f; color: var(--green); }
+.tx-cashback { color: var(--green); font: normal 6px 'DM Mono', monospace; }
 .spend-source-list { display: grid; grid-template-columns: 1fr; }
 .spend-source-list > div { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #1e252b; color: #828e96; font-size: 8px; }
 .spend-source-list strong { color: #dce3e6; }

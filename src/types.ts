@@ -76,6 +76,7 @@ export interface SpendTransaction {
   category: string | null
   status: string | null
   transaction_type: string
+  metadata: Record<string, unknown>
 }
 
 export interface LossEvent {

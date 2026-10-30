@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "sync:portfolio": "node scripts/sync-portfolio.mjs",
+    "backfill:crypto": "node scripts/backfill-crypto-history.mjs",
     "typecheck": "tsc -b"
   },
   "dependencies": {

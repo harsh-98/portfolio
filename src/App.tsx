@@ -12,6 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Coins,
+  ExternalLink,
   Layers3,
   LogOut,
   Maximize2,
@@ -117,6 +118,19 @@ function formatMoneyCents(value: number) {
 
 function formatAmount(value: number) {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 6 }).format(value)
+}
+
+function spendCashback(transaction: SpendTransaction) {
+  const value = Number(transaction.metadata?.cashback_earned || 0)
+  return Number.isFinite(value) ? value : 0
+}
+
+function spendTransactionUrl(transaction: SpendTransaction) {
+  const metadata = transaction.metadata || {}
+  const explicitUrl = String(metadata.explorer_url || metadata.transaction_url || '')
+  if (/^https:\/\//i.test(explicitUrl)) return explicitUrl
+  const transactionHash = String(metadata.transaction_hash || metadata.tx_hash || '')
+  return /^0x[a-fA-F0-9]{64}$/.test(transactionHash) ? `https://blockscan.com/tx/${transactionHash}` : null
 }
 
 function canonicalCryptoSymbol(symbol: string) {
@@ -427,7 +441,7 @@ function Dashboard({ session }: { session: Session }) {
       supabase.from('position_snapshots').select('snapshot_date,source_key,quantity,price_usd,value_usd,account:accounts(name,institution),asset:assets(symbol,name,asset_class,network)').order('snapshot_date', { ascending: true }).limit(10000),
       supabase.from('sync_runs').select('id,source,status,records_written,message,started_at,finished_at').order('started_at', { ascending: false }).limit(20),
       supabase.from('brokerage_transactions').select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,account:accounts(name,institution),asset:assets(symbol,name)').order('event_time', { ascending: false }).limit(1000),
-      supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status,transaction_type').order('occurred_at', { ascending: false }).limit(5000),
+      supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status,transaction_type,metadata').order('occurred_at', { ascending: false }).limit(5000),
       supabase.from('loss_events').select('id,event_key,event_at,date_precision,title,category,status,loss_low_usd,loss_high_usd,details').order('event_at', { ascending: false, nullsFirst: false }),
     ])
     const failure = positionsResult.error || accountsResult.error || snapshotsResult.error || positionSnapshotsResult.error || syncRunsResult.error || brokerageResult.error || spendResult.error || lossEventsResult.error
@@ -577,19 +591,33 @@ function Dashboard({ session }: { session: Session }) {
   const selectedBrokerTransactions = selectedBrokerDetail
     ? (brokerageByAsset.get(selectedBrokerDetail.symbol) || []).filter((transaction) => transaction.account && platformIdentity(transaction.account) === selectedBrokerDetail.venue)
     : []
-  const transactionGridRows = useMemo<TransactionGridRow[]>(() => selectedBrokerTransactions.map((transaction) => ({
+  const displayBrokerTransactions = useMemo(() => {
+    const dayKey = (transaction: BrokerageTransaction) => transaction.event_time.slice(0, 10)
+    const closedDays = new Set(selectedBrokerTransactions.filter((transaction) => transaction.event_type.toLowerCase() === 'closed position').map(dayKey))
+    return selectedBrokerTransactions.filter((transaction) => {
+      const eventType = transaction.event_type.toLowerCase()
+      return !(eventType === 'stock sell' && closedDays.has(dayKey(transaction)))
+    })
+  }, [selectedBrokerTransactions])
+  const transactionGridRows = useMemo<TransactionGridRow[]>(() => displayBrokerTransactions.map((transaction) => {
+    const rawType = transaction.event_type.toLowerCase()
+    const eventType = rawType === 'stock purchase' ? 'Buy' : rawType === 'stock sell' || rawType === 'closed position' ? 'Sell' : transaction.event_type
+    return {
     id: transaction.id,
     eventTime: new Date(transaction.event_time),
-    eventType: transaction.event_type,
+    eventType,
     asset: transaction.asset?.name || transaction.asset?.symbol || selectedBrokerDetail?.symbol || '',
     quantity: transaction.quantity == null ? null : Number(transaction.quantity),
     price: transaction.price_usd == null ? null : Number(transaction.price_usd),
     amount: transaction.amount_usd == null ? null : Number(transaction.amount_usd),
     realizedPnl: transaction.realized_pnl_usd == null ? null : Number(transaction.realized_pnl_usd),
-  })), [selectedBrokerDetail, selectedBrokerTransactions])
+  }}), [displayBrokerTransactions, selectedBrokerDetail])
+  const displayedBuyCount = transactionGridRows.filter((transaction) => transaction.eventType === 'Buy').length
+  const displayedSellCount = transactionGridRows.filter((transaction) => transaction.eventType === 'Sell').length
+  const displayedRealizedPnl = transactionGridRows.reduce((sum, transaction) => sum + Number(transaction.realizedPnl || 0), 0)
   const transactionColumns = useMemo<ColDef<TransactionGridRow>[]>(() => [
     { field: 'eventTime', headerName: 'Date', minWidth: 105, sort: 'desc', filter: 'agDateColumnFilter', valueFormatter: ({ value }) => value instanceof Date ? value.toLocaleDateString() : '—' },
-    { field: 'eventType', headerName: 'Transaction', minWidth: 125, filter: 'agTextColumnFilter' },
+    { field: 'eventType', headerName: 'Trade', minWidth: 90, filter: 'agTextColumnFilter' },
     { field: 'asset', headerName: 'Asset', minWidth: 150, flex: 1, filter: 'agTextColumnFilter' },
     { field: 'quantity', headerName: 'Quantity', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatAmount(Number(value)) },
     { field: 'price', headerName: 'Price', minWidth: 100, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
@@ -824,7 +852,7 @@ function Dashboard({ session }: { session: Session }) {
                       })}</div>
                     </div>
                   })()}
-                  {selectedBrokerDetail && <div className={`broker-drilldown ${brokerFullscreen ? 'fullscreen' : ''}`}><div className="drilldown-head"><span><i /><strong>{selectedBrokerDetail.symbol} · {selectedBrokerDetail.venue}</strong><small>{selectedBrokerTransactions.length} records · sort any column or use the filters</small></span><div className="drilldown-actions"><button onClick={() => setBrokerFullscreen((value) => !value)} aria-label={brokerFullscreen ? 'Exit full screen' : 'Maximize transaction history'} title={brokerFullscreen ? 'Exit full screen' : 'Maximize'}>{brokerFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button><button onClick={() => { setSelectedBrokerDetail(null); setBrokerFullscreen(false) }} aria-label="Close transaction history"><X size={14} /></button></div></div><div className="broker-grid"><AgGridReact<TransactionGridRow> theme={portfolioGridTheme} rowData={transactionGridRows} columnDefs={transactionColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} getRowId={({ data }) => data.id} rowHeight={34} headerHeight={31} floatingFiltersHeight={29} /></div></div>}
+                  {selectedBrokerDetail && <div className={`broker-drilldown ${brokerFullscreen ? 'fullscreen' : ''}`}><div className="drilldown-head"><span><i /><strong>{selectedBrokerDetail.symbol} · {selectedBrokerDetail.venue}</strong><small>{displayedBuyCount} buys · {displayedSellCount} sells · realized <b className={displayedRealizedPnl >= 0 ? 'value-positive' : 'value-negative'}>{displayedRealizedPnl >= 0 ? '+' : ''}{formatMoney(displayedRealizedPnl)}</b></small></span><div className="drilldown-actions"><button onClick={() => setBrokerFullscreen((value) => !value)} aria-label={brokerFullscreen ? 'Exit full screen' : 'Maximize transaction history'} title={brokerFullscreen ? 'Exit full screen' : 'Maximize'}>{brokerFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button><button onClick={() => { setSelectedBrokerDetail(null); setBrokerFullscreen(false) }} aria-label="Close transaction history"><X size={14} /></button></div></div><div className="broker-grid"><AgGridReact<TransactionGridRow> theme={portfolioGridTheme} rowData={transactionGridRows} columnDefs={transactionColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} getRowId={({ data }) => data.id} rowHeight={34} headerHeight={31} floatingFiltersHeight={29} /></div></div>}
                 </article>
 
                 <aside className={overviewPanelClass('spending', 'overview-spending')}>
@@ -833,9 +861,9 @@ function Dashboard({ session }: { session: Session }) {
                   <div className="source-toggles">{[{ key: 'ether.fi', label: 'Ether.fi' }, { key: 'kast', label: 'KAST' }, { key: 'ethena', label: 'Ethena' }].map((source) => <label key={source.key}><input type="checkbox" checked={selectedCardSources.includes(source.key)} onChange={() => toggleCardSource(source.key)} /><span>{source.label}</span></label>)}</div>
                   <div className="card-activity-summary"><div><span>Current balance</span><strong>{formatMoneyCents(cardBalanceTotal)}</strong></div><div><span>Cleared spend</span><strong>{formatMoneyCents(recentSpendTotal)}</strong></div><div><span>Refunds</span><strong className="value-positive">+{formatMoneyCents(recentRefundTotal)}</strong></div><div><span>Cashback</span><strong className="value-positive">+{formatMoneyCents(recentCashbackTotal)}</strong></div></div>
                   <div className="spend-section"><div className="spend-section-title"><span>Balances</span><small>{cardBalances.length}</small></div><div className="balance-list">{cardBalances.map((position) => <div key={position.id}><span><strong>{position.asset.symbol}</strong><small>{position.account.name}</small></span><b>{formatMoney(Number(position.value_usd))}</b></div>)}</div></div>
-                  <div className="spend-section activity-section"><div className="spend-section-title"><span>Cleared spending</span><small>{recentPurchases.length}</small></div><div className="recent-spend-list">{recentPurchases.map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card transaction'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b>{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentPurchases.length && <p className="activity-empty">No data for this month.</p>}</div></div>
-                  <div className="spend-section activity-section refund-section"><div className="spend-section-title"><span>Refunds</span><small>{recentRefunds.length}</small></div><div className="recent-spend-list">{recentRefunds.map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card refund'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentRefunds.length && <p className="activity-empty">No data for this month.</p>}</div></div>
-                  <div className="spend-section activity-section cashback-section"><div className="spend-section-title"><span>Cashback</span><small>{recentCashback.length}</small></div><div className="recent-spend-list">{recentCashback.map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Cashback'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentCashback.length && <p className="activity-empty">No data for this month.</p>}</div></div>
+                  <div className="spend-section activity-section"><div className="spend-section-title"><span>Cleared spending</span><small>{recentPurchases.length}</small></div><div className="recent-spend-list">{recentPurchases.map((transaction) => { const cashback = spendCashback(transaction); const transactionUrl = spendTransactionUrl(transaction); return <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card transaction'}</strong><small><i className="tx-type purchase">Spend</i>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}{transactionUrl && <a href={transactionUrl} target="_blank" rel="noreferrer" aria-label="Open transaction on explorer">Tx <ExternalLink size={8} /></a>}</small>{cashback > 0 && <em className="tx-cashback">+{formatMoneyCents(cashback)} cashback</em>}</span><b>{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div> })}{!recentPurchases.length && <p className="activity-empty">No data for this month.</p>}</div></div>
+                  <div className="spend-section activity-section refund-section"><div className="spend-section-title"><span>Refunds</span><small>{recentRefunds.length}</small></div><div className="recent-spend-list">{recentRefunds.map((transaction) => { const transactionUrl = spendTransactionUrl(transaction); return <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card refund'}</strong><small><i className="tx-type refund">Refund</i>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}{transactionUrl && <a href={transactionUrl} target="_blank" rel="noreferrer" aria-label="Open transaction on explorer">Tx <ExternalLink size={8} /></a>}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div> })}{!recentRefunds.length && <p className="activity-empty">No data for this month.</p>}</div></div>
+                  <div className="spend-section activity-section cashback-section"><div className="spend-section-title"><span>Cashback</span><small>{recentCashback.length}</small></div><div className="recent-spend-list">{recentCashback.map((transaction) => { const transactionUrl = spendTransactionUrl(transaction); return <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Cashback'}</strong><small><i className="tx-type cashback">Cashback</i>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}{transactionUrl && <a href={transactionUrl} target="_blank" rel="noreferrer" aria-label="Open transaction on explorer">Tx <ExternalLink size={8} /></a>}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div> })}{!recentCashback.length && <p className="activity-empty">No data for this month.</p>}</div></div>
                 </aside>
               </div>
             </section>
