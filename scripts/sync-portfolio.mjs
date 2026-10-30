@@ -424,7 +424,8 @@ if (dryRun) {
 
 const supabaseUrl = required("SUPABASE_URL").replace(/\/$/, "");
 const supabaseKey = required("SUPABASE_SECRET_KEY");
-const ownerEmail = required("PORTFOLIO_OWNER_EMAIL").toLowerCase();
+const ownerEmail = process.env.PORTFOLIO_OWNER_EMAIL?.trim().toLowerCase();
+const configuredOwnerId = process.env.PORTFOLIO_OWNER_ID?.trim();
 const baseHeaders = { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}`, "Content-Type": "application/json" };
 async function supabase(endpoint, { method = "GET", body, prefer } = {}) {
   const response = await fetch(`${supabaseUrl}${endpoint}`, { method, headers: { ...baseHeaders, ...(prefer ? { Prefer: prefer } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -433,10 +434,14 @@ async function supabase(endpoint, { method = "GET", body, prefer } = {}) {
   if (!response.ok) throw new Error(`Supabase ${method} ${endpoint}: ${response.status} ${data?.message ?? text.slice(0, 200)}`);
   return data;
 }
-const users = await supabase("/auth/v1/admin/users?page=1&per_page=100");
-const owner = users.users.find((user) => user.email?.toLowerCase() === ownerEmail);
-if (!owner) throw new Error(`No Supabase user found for ${ownerEmail}`);
-const ownerId = owner.id;
+let ownerId = configuredOwnerId;
+if (!ownerId) {
+  if (!ownerEmail) throw new Error("Missing PORTFOLIO_OWNER_ID or PORTFOLIO_OWNER_EMAIL");
+  const users = await supabase("/auth/v1/admin/users?page=1&per_page=100");
+  const owner = users.users.find((user) => user.email?.toLowerCase() === ownerEmail);
+  if (!owner) throw new Error(`No Supabase user found for the configured importer identity`);
+  ownerId = owner.id;
+}
 const accountCache = new Map();
 const assetCache = new Map();
 

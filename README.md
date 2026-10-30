@@ -6,7 +6,7 @@ A private, multi-asset portfolio dashboard for GitHub Pages, backed by Supabase 
 
 - GitHub Pages contains application code only. It contains no portfolio records.
 - The browser uses a Supabase publishable key and an authenticated user session.
-- PostgreSQL Row Level Security restricts every row to `auth.uid()`.
+- PostgreSQL Row Level Security allows approved authenticated users to read the shared portfolio; writes remain scoped to the UUID that owns each row.
 - The Supabase secret key, exchange API secrets, bank data and private wallet credentials must never enter this repository.
 - The dashboard never needs seed data committed to Git.
 
@@ -36,7 +36,7 @@ In Supabase Auth URL Configuration, set:
 - Site URL: `https://harsh-98.github.io/portfolio/`
 - Additional redirect URL: `http://localhost:5173/portfolio/`
 
-Create the first user through the dashboard's email magic-link form, then disable open sign-ups if this will remain a single-user application.
+Create approved users through the dashboard's email magic-link form, then disable open sign-ups. All authenticated users can read the shared portfolio; authentication is still required and anonymous reads remain denied.
 
 ## GitHub Pages
 
