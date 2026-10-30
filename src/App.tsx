@@ -4,6 +4,7 @@ import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef } from 'ag
 import { AgGridReact } from 'ag-grid-react'
 import {
   Activity,
+  AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
   BarChart3,
@@ -24,7 +25,7 @@ import {
   X,
 } from 'lucide-react'
 import { isConfigured, supabase } from './lib/supabase'
-import type { Account, AssetClass, BrokerageTransaction, Position, PositionSnapshot, Snapshot, SpendTransaction, SyncRun } from './types'
+import type { Account, AssetClass, BrokerageTransaction, LossEvent, Position, PositionSnapshot, Snapshot, SpendTransaction, SyncRun } from './types'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -90,7 +91,7 @@ const classMeta: Record<AssetClass, { label: string; color: string }> = {
   liability: { label: 'Liabilities', color: '#9b4b43' },
 }
 
-type View = 'overview' | 'crypto' | 'holdings' | 'activity'
+type View = 'overview' | 'crypto' | 'losses' | 'holdings' | 'activity'
 type OverviewPanel = 'platforms' | 'allocation' | 'digital' | 'equities' | 'spending'
 
 const money = new Intl.NumberFormat('en-US', {
@@ -163,6 +164,14 @@ function platformIdentity(account: Pick<Account, 'name' | 'institution'>, source
 
 function positionPlatform(position: Position) {
   return platformIdentity(position.account, position.source_key)
+}
+
+function cardSourceForPosition(position: Position) {
+  const identity = `${position.account.name} ${position.account.institution}`.toLowerCase()
+  if (/ether\.?fi/.test(identity)) return 'ether.fi'
+  if (identity.includes('kast')) return 'kast'
+  if (identity.includes('ethena')) return 'ethena'
+  return null
 }
 
 function Login() {
@@ -394,6 +403,7 @@ function Dashboard({ session }: { session: Session }) {
   const [syncRuns, setSyncRuns] = useState<SyncRun[]>([])
   const [brokerageTransactions, setBrokerageTransactions] = useState<BrokerageTransaction[]>([])
   const [spendTransactions, setSpendTransactions] = useState<SpendTransaction[]>([])
+  const [lossEvents, setLossEvents] = useState<LossEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
@@ -405,11 +415,12 @@ function Dashboard({ session }: { session: Session }) {
   const [brokerFullscreen, setBrokerFullscreen] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState<OverviewPanel | null>(null)
   const [spendMonth, setSpendMonth] = useState(new Date().toISOString().slice(0, 7))
+  const [selectedCardSources, setSelectedCardSources] = useState(['ether.fi', 'kast', 'ethena'])
 
   const load = useCallback(async () => {
     setLoading(true)
     setError('')
-    const [positionsResult, accountsResult, snapshotsResult, positionSnapshotsResult, syncRunsResult, brokerageResult, spendResult] = await Promise.all([
+    const [positionsResult, accountsResult, snapshotsResult, positionSnapshotsResult, syncRunsResult, brokerageResult, spendResult, lossEventsResult] = await Promise.all([
       supabase.from('positions').select('*, account:accounts(*), asset:assets(*)').order('value_usd', { ascending: false }),
       supabase.from('accounts').select('*').order('name'),
       supabase.from('portfolio_snapshots').select('*').order('snapshot_date', { ascending: true }).limit(90),
@@ -417,8 +428,9 @@ function Dashboard({ session }: { session: Session }) {
       supabase.from('sync_runs').select('id,source,status,records_written,message,started_at,finished_at').order('started_at', { ascending: false }).limit(20),
       supabase.from('brokerage_transactions').select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,account:accounts(name,institution),asset:assets(symbol,name)').order('event_time', { ascending: false }).limit(1000),
       supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status,transaction_type').order('occurred_at', { ascending: false }).limit(5000),
+      supabase.from('loss_events').select('id,event_key,event_at,date_precision,title,category,status,loss_low_usd,loss_high_usd,details').order('event_at', { ascending: false, nullsFirst: false }),
     ])
-    const failure = positionsResult.error || accountsResult.error || snapshotsResult.error || positionSnapshotsResult.error || syncRunsResult.error || brokerageResult.error || spendResult.error
+    const failure = positionsResult.error || accountsResult.error || snapshotsResult.error || positionSnapshotsResult.error || syncRunsResult.error || brokerageResult.error || spendResult.error || lossEventsResult.error
     if (failure) setError(failure.message)
     setPositions((positionsResult.data || []) as unknown as Position[])
     setAccounts((accountsResult.data || []) as Account[])
@@ -427,6 +439,7 @@ function Dashboard({ session }: { session: Session }) {
     setSyncRuns((syncRunsResult.data || []) as SyncRun[])
     setBrokerageTransactions((brokerageResult.data || []) as unknown as BrokerageTransaction[])
     setSpendTransactions((spendResult.data || []) as SpendTransaction[])
+    setLossEvents((lossEventsResult.data || []) as LossEvent[])
     setLoading(false)
   }, [])
 
@@ -614,17 +627,19 @@ function Dashboard({ session }: { session: Session }) {
     ? [...latestCryptoPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, start: firstCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
     : []
   const realizedXtb = brokerageTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
-  const cardBalances = positions.filter((position) => /ether\.?fi|kast|ethena/i.test(`${position.account.name} ${position.account.institution}`)).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
+  const cardBalances = positions.filter((position) => { const source = cardSourceForPosition(position); return source && selectedCardSources.includes(source) }).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
   const cardBalanceTotal = cardBalances.reduce((sum, position) => sum + Number(position.value_usd), 0)
   const spendMonths = [...new Set(spendTransactions.map((transaction) => transaction.occurred_at.slice(0, 7)))].sort()
   const minSpendMonth = spendMonths[0] || spendMonth
   const maxSpendMonth = spendMonths[spendMonths.length - 1] || spendMonth
   const selectedMonthLabel = new Date(`${spendMonth}-01T00:00:00Z`).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
-  const selectedCardActivity = spendTransactions.filter((transaction) => ['ether.fi', 'kast', 'ethena'].includes(transaction.source) && transaction.occurred_at.slice(0, 7) === spendMonth && String(transaction.status).trim().toLowerCase() === 'cleared')
+  const selectedCardActivity = spendTransactions.filter((transaction) => selectedCardSources.includes(transaction.source) && transaction.occurred_at.slice(0, 7) === spendMonth && String(transaction.status).trim().toLowerCase() === 'cleared')
   const recentPurchases = selectedCardActivity.filter((transaction) => transaction.transaction_type === 'purchase')
   const recentRefunds = selectedCardActivity.filter((transaction) => transaction.transaction_type === 'refund')
+  const recentCashback = selectedCardActivity.filter((transaction) => transaction.transaction_type === 'cashback')
   const recentSpendTotal = recentPurchases.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
   const recentRefundTotal = recentRefunds.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
+  const recentCashbackTotal = recentCashback.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
   const latestSnapshot = snapshots.length ? snapshots[snapshots.length - 1] : null
   const previous = snapshots.length > 1 ? snapshots[snapshots.length - 2].total_value_usd : null
   const change = previous ? total - previous : 0
@@ -665,10 +680,23 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'pnl', headerName: 'P/L', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'weight', headerName: 'Weight', minWidth: 100, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(2)}%` },
   ], [])
+  const lossTotalLow = lossEvents.reduce((sum, event) => sum + Number(event.loss_low_usd || 0), 0)
+  const lossTotalHigh = lossEvents.reduce((sum, event) => sum + Number(event.loss_high_usd || event.loss_low_usd || 0), 0)
+  const realizedLoss = lossEvents.filter((event) => event.status === 'realized').reduce((sum, event) => sum + Number(event.loss_low_usd || 0), 0)
+  const unrealizedLoss = lossEvents.filter((event) => ['unrealized', 'mixed'].includes(event.status)).reduce((sum, event) => sum + Number(event.loss_low_usd || 0), 0)
+  const pendingLossEvents = lossEvents.filter((event) => event.status === 'pending' || event.loss_low_usd == null).length
+  const lossColumns = useMemo<ColDef<LossEvent>[]>(() => [
+    { field: 'event_at', headerName: 'Date / time', minWidth: 145, filter: 'agDateColumnFilter', valueFormatter: ({ value, data }) => { if (!value || data?.date_precision === 'unknown') return 'Unconfirmed'; const date = new Date(value); if (data?.date_precision === 'month') return date.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' }); const label = date.toLocaleDateString(undefined, { dateStyle: 'medium', timeZone: 'UTC' }); return data?.date_precision === 'valuation_date' ? `${label} valuation` : label } },
+    { field: 'title', headerName: 'Event', minWidth: 210, flex: 1, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: LossEvent }) => data ? <span className="grid-asset"><strong>{data.title}</strong><small>{data.category}</small></span> : null },
+    { field: 'status', headerName: 'Status', minWidth: 110, filter: 'agTextColumnFilter', cellClass: ({ value }) => `loss-status-${value}` },
+    { field: 'loss_low_usd', headerName: 'Estimated loss', minWidth: 155, filter: 'agNumberColumnFilter', valueFormatter: ({ data }) => { if (!data || data.loss_low_usd == null) return 'Pending'; const low = Number(data.loss_low_usd); const high = Number(data.loss_high_usd ?? low); return low === high ? `-${formatMoney(low)}` : `-${formatMoney(low)} to -${formatMoney(high)}` }, cellClass: 'grid-pnl-negative' },
+    { field: 'details', headerName: 'Reconciliation details', minWidth: 360, flex: 2, filter: 'agTextColumnFilter', wrapText: true, autoHeight: true },
+  ], [])
 
   const navItems: Array<{ id: View; label: string; icon: typeof BarChart3 }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'crypto', label: 'Crypto value', icon: Coins },
+    { id: 'losses', label: 'Losses', icon: AlertTriangle },
     { id: 'holdings', label: 'Holdings', icon: Layers3 },
     { id: 'activity', label: 'Activity', icon: Activity },
   ]
@@ -686,6 +714,10 @@ function Dashboard({ session }: { session: Session }) {
 
   function overviewPanelClass(panel: OverviewPanel, base: string) {
     return `panel ${base} ${expandedPanel === panel ? 'panel-expanded' : ''}`
+  }
+
+  function toggleCardSource(source: string) {
+    setSelectedCardSources((current) => current.includes(source) ? current.filter((item) => item !== source) : [...current, source])
   }
 
   return (
@@ -715,8 +747,8 @@ function Dashboard({ session }: { session: Session }) {
 
         <div className={`page-content ${view === 'overview' ? 'overview-page' : ''}`}>
           {view !== 'overview' && <div className="page-heading">
-            <div><p className="eyebrow">{view.toUpperCase()}</p><h1>{view === 'crypto' ? 'Crypto value history' : view === 'holdings' ? 'All holdings' : 'Portfolio activity'}</h1></div>
-            <div className="heading-actions"><button className="secondary-button" onClick={() => void load()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} />Refresh</button><button className="primary-button compact" onClick={() => setShowHoldingForm(true)}><Plus size={17} />Add holding</button></div>
+            <div><p className="eyebrow">{view.toUpperCase()}</p><h1>{view === 'crypto' ? 'Crypto value history' : view === 'losses' ? 'Loss history' : view === 'holdings' ? 'All holdings' : 'Portfolio activity'}</h1></div>
+            <div className="heading-actions"><button className="secondary-button" onClick={() => void load()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} />Refresh</button>{view === 'holdings' && <button className="primary-button compact" onClick={() => setShowHoldingForm(true)}><Plus size={17} />Add holding</button>}</div>
           </div>}
 
           {error && <div className="error-banner"><ShieldCheck size={18} /><span>{error}</span></div>}
@@ -724,9 +756,7 @@ function Dashboard({ session }: { session: Session }) {
           {view === 'overview' && (
             <section className="overview-dashboard">
               <div className="overview-kpis">
-                <article className="net-worth-card"><span>Net worth</span><strong>{loading ? '—' : formatMoney(total)}</strong><p className={previous && change < 0 ? 'negative' : 'positive'}>{previous ? (change >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />) : <ShieldCheck size={13} />}{snapshotMessage}</p></article>
-                <article className="summary-cell"><span>Cash available</span><strong>{formatMoney(liquid)}</strong><small>{total ? `${((liquid / total) * 100).toFixed(1)}% of net worth` : '—'}</small></article>
-                <article className="summary-cell"><span>Invested</span><strong>{formatMoney(total - liquid)}</strong><small>{total ? `${(((total - liquid) / total) * 100).toFixed(1)}% of net worth` : '—'}</small></article>
+                <article className="wealth-strip"><section><span>Net worth</span><strong>{loading ? '—' : formatMoney(total)}</strong></section><section><span>Cash available</span><strong>{formatMoney(liquid)}</strong><small>{total ? `${((liquid / total) * 100).toFixed(1)}%` : '—'}</small></section><section><span>Invested</span><strong>{formatMoney(total - liquid)}</strong><small>{total ? `${(((total - liquid) / total) * 100).toFixed(1)}%` : '—'}</small></section><p className={previous && change < 0 ? 'negative' : 'positive'}>{previous ? (change >= 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />) : <ShieldCheck size={12} />}{snapshotMessage}</p></article>
               </div>
 
               <div className="overview-grid">
@@ -769,10 +799,12 @@ function Dashboard({ session }: { session: Session }) {
                 <aside className={overviewPanelClass('spending', 'overview-spending')}>
                   <div className="panel-heading"><div><p className="eyebrow">CARD ACCOUNTS</p><h2>Balances &amp; activity</h2></div><div className="panel-heading-actions"><span className="panel-badge">{formatMoney(cardBalanceTotal)}</span><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'spending' ? null : 'spending')} aria-label="Expand card activity">{expandedPanel === 'spending' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className="month-selector"><button onClick={() => shiftSpendMonth(-1)} disabled={spendMonth <= minSpendMonth} aria-label="Previous month"><ChevronLeft size={13} /></button><strong>{selectedMonthLabel}</strong><button onClick={() => shiftSpendMonth(1)} disabled={spendMonth >= maxSpendMonth} aria-label="Next month"><ChevronRight size={13} /></button></div>
-                  <div className="card-activity-summary"><div><span>Current balance</span><strong>{formatMoneyCents(cardBalanceTotal)}</strong></div><div><span>Cleared spend</span><strong>{formatMoneyCents(recentSpendTotal)}</strong></div><div><span>Refunds</span><strong className="value-positive">+{formatMoneyCents(recentRefundTotal)}</strong></div></div>
+                  <div className="source-toggles">{[{ key: 'ether.fi', label: 'Ether.fi' }, { key: 'kast', label: 'KAST' }, { key: 'ethena', label: 'Ethena' }].map((source) => <label key={source.key}><input type="checkbox" checked={selectedCardSources.includes(source.key)} onChange={() => toggleCardSource(source.key)} /><span>{source.label}</span></label>)}</div>
+                  <div className="card-activity-summary"><div><span>Current balance</span><strong>{formatMoneyCents(cardBalanceTotal)}</strong></div><div><span>Cleared spend</span><strong>{formatMoneyCents(recentSpendTotal)}</strong></div><div><span>Refunds</span><strong className="value-positive">+{formatMoneyCents(recentRefundTotal)}</strong></div><div><span>Cashback</span><strong className="value-positive">+{formatMoneyCents(recentCashbackTotal)}</strong></div></div>
                   <div className="spend-section"><div className="spend-section-title"><span>Balances</span><small>{cardBalances.length}</small></div><div className="balance-list">{cardBalances.map((position) => <div key={position.id}><span><strong>{position.asset.symbol}</strong><small>{position.account.name}</small></span><b>{formatMoney(Number(position.value_usd))}</b></div>)}</div></div>
                   <div className="spend-section activity-section"><div className="spend-section-title"><span>Cleared spending</span><small>{recentPurchases.length}</small></div><div className="recent-spend-list">{recentPurchases.map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card transaction'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b>{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentPurchases.length && <p className="activity-empty">No data for this month.</p>}</div></div>
                   <div className="spend-section activity-section refund-section"><div className="spend-section-title"><span>Refunds</span><small>{recentRefunds.length}</small></div><div className="recent-spend-list">{recentRefunds.map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card refund'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentRefunds.length && <p className="activity-empty">No data for this month.</p>}</div></div>
+                  <div className="spend-section activity-section cashback-section"><div className="spend-section-title"><span>Cashback</span><small>{recentCashback.length}</small></div><div className="recent-spend-list">{recentCashback.map((transaction) => <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Cashback'}</strong><small>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div>)}{!recentCashback.length && <p className="activity-empty">No data for this month.</p>}</div></div>
                 </aside>
               </div>
             </section>
@@ -805,6 +837,21 @@ function Dashboard({ session }: { session: Session }) {
                   <span>Only positions worth at least $100 on that historical date are retained in the backfill.</span>
                 </article>
               </div>
+            </section>
+          )}
+
+          {view === 'losses' && (
+            <section className="losses-page">
+              <div className="loss-kpis">
+                <article><span>Estimated historical losses</span><strong className="value-negative">{lossTotalLow === lossTotalHigh ? `-${formatMoney(lossTotalLow)}` : `-${formatMoney(lossTotalLow)} to -${formatMoney(lossTotalHigh)}`}</strong><small>Do not subtract again from current net worth</small></article>
+                <article><span>Realized</span><strong className="value-negative">-{formatMoney(realizedLoss)}</strong><small>Confirmed or user-reported closed losses</small></article>
+                <article><span>Unrealized / mixed</span><strong className="value-negative">-{formatMoney(unrealizedLoss)}</strong><small>Current impairment and unresolved incidents</small></article>
+                <article><span>Pending reconciliation</span><strong>{pendingLossEvents}</strong><small>Events missing cost, date, or final outcome</small></article>
+              </div>
+              <article className="panel losses-panel">
+                <div className="panel-heading"><div><p className="eyebrow">EVENT LEDGER</p><h2>Loss events and valuation dates</h2></div><span>{lossEvents.length} events</span></div>
+                <div className="losses-grid"><AgGridReact<LossEvent> theme={portfolioGridTheme} rowData={lossEvents} columnDefs={lossColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} getRowId={({ data }) => data.id} rowHeight={52} headerHeight={34} floatingFiltersHeight={30} /></div>
+              </article>
             </section>
           )}
 

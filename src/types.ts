@@ -78,6 +78,19 @@ export interface SpendTransaction {
   transaction_type: string
 }
 
+export interface LossEvent {
+  id: string
+  event_key: string
+  event_at: string | null
+  date_precision: 'exact' | 'month' | 'valuation_date' | 'unknown'
+  title: string
+  category: string
+  status: 'realized' | 'unrealized' | 'mixed' | 'pending'
+  loss_low_usd: number | null
+  loss_high_usd: number | null
+  details: string
+}
+
 export interface Snapshot {
   id: string
   snapshot_date: string

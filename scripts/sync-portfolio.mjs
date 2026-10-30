@@ -306,11 +306,10 @@ async function loadEtherfiSpend(csvPath) {
   const headers = rows.shift().map((value) => value.trim().toLowerCase());
   const ix = Object.fromEntries(headers.map((name, index) => [name, index]));
   const value = (row, name) => String(row[ix[name]] ?? "").trim();
-  const typeFor = (type) => ({
+  const typeFor = (type) => type.includes("cashback") ? "cashback" : ({
     card_spend: "purchase",
     card_refund: "refund",
     topup: "topup",
-    cashback: "cashback",
     cash_withdrawal: "withdrawal",
   })[type] ?? type.replaceAll("_", " ");
   return rows.map((row) => {
@@ -320,6 +319,7 @@ async function loadEtherfiSpend(csvPath) {
     const card = value(row, "card");
     const merchant = value(row, "description").replace(/\s+/g, " ").trim();
     const originalCurrency = value(row, "original currency").toUpperCase();
+    const transactionType = typeFor(sourceType);
     const identity = [occurredAt.toISOString(), sourceType, merchant, amountUsd, value(row, "currency"), card].join("|");
     return {
       source: "ether.fi",
@@ -327,8 +327,8 @@ async function loadEtherfiSpend(csvPath) {
       occurred_at: occurredAt.toISOString(),
       merchant: merchant || null,
       description: sourceType.replaceAll("_", " "),
-      status: value(row, "status").toLowerCase() || null,
-      transaction_type: typeFor(sourceType),
+      status: value(row, "status").toLowerCase() || (transactionType === "cashback" ? "cleared" : null),
+      transaction_type: transactionType,
       original_amount: value(row, "original amount") ? number(value(row, "original amount")) : null,
       original_currency: /^[A-Z]{3}$/.test(originalCurrency) ? originalCurrency : null,
       amount_usd: round(amountUsd),
@@ -360,6 +360,31 @@ async function parseKastStatement(pdfPath) {
   };
   for (const items of pages) {
     const dates = items.filter((item) => item.x < 90 && /^\d{2} [A-Z][a-z]{2} \d{4}$/.test(item.text)).sort((a, b) => b.y - a.y);
+    const rewardItem = items.find((item) => item.x >= 90 && item.x < 350 && /^Cash Reward/.test(item.text));
+    if (rewardItem && dates.length) {
+      const rewardLine = items.filter((item) => Math.abs(item.y - rewardItem.y) < 1.5);
+      const reward = amountAt(rewardLine, 350, 425);
+      const balanceAfter = amountAt(rewardLine, 505, 590);
+      if (reward != null && reward > 0) {
+        const [, month, year] = dates[0].text.match(/^\d{2} ([A-Z][a-z]{2}) (\d{4})$/) || [];
+        const occurredAt = new Date(`01 ${month} ${year} 12:00:00 GMT+0530`).toISOString();
+        transactions.push({
+          source: "kast",
+          external_ref: `kast:cash-reward:${occurredAt.slice(0, 7)}:${hash(path.basename(pdfPath))}`,
+          occurred_at: occurredAt,
+          merchant: "Cash Reward",
+          description: "cashback",
+          status: "cleared",
+          transaction_type: "cashback",
+          original_amount: reward,
+          original_currency: "USD",
+          amount_usd: round(reward),
+          category: "Cashback",
+          card_last_four: null,
+          metadata: { import_file: path.basename(pdfPath), balance_after_usd: balanceAfter, statement_level_reward: true },
+        });
+      }
+    }
     for (let index = 0; index < dates.length; index += 1) {
       const date = dates[index];
       const nextY = dates[index + 1]?.y ?? date.y - 100;
