@@ -173,6 +173,7 @@ function canonicalCryptoSymbol(symbol: string) {
   if (['WBTC', 'UBTC', 'BTCB'].includes(normalized)) return 'BTC'
   if (['WETH', 'STETH', 'WSTETH', 'RETH', 'WEETH', 'EETH'].includes(normalized)) return 'ETH'
   if (['XAUT0', 'XAUT'].includes(normalized)) return 'XAUT'
+  if (normalized === 'RUSDC') return 'rUSDC'
   return normalized
 }
 
@@ -258,24 +259,19 @@ function positionPlatform(position: Position) {
   return platformIdentity(position.account, position.source_key)
 }
 
-function networkSlug(network: string | null) {
-  const normalized = String(network || 'chain').toLowerCase()
-  const aliases: Record<string, string> = { ethereum: 'eth', arbitrum: 'arb', optimism: 'op', polygon: 'pol', 'bnb chain': 'bnb', hyperevm: 'hype', hyperliquid: 'hyperliquid' }
-  return aliases[normalized] || normalized.replace(/\s+/g, '-')
-}
-
 function digitalPositionLocation(position: Position) {
   const platform = positionPlatform(position)
   if (!platform.startsWith('0x')) return platform
-  const network = networkSlug(position.asset.network)
+  const network = String(position.asset.network || 'Unknown network')
   const identity = `${position.account.name} ${position.account.institution}`.toLowerCase()
   if (identity.includes('hyperliquid')) {
     const location = identity.includes('lending') ? 'lending' : identity.includes('staking') ? 'staking' : identity.includes('vault') ? 'vault' : identity.includes('perps') ? 'perps' : 'spot'
-    return `${platform} · hyperliquid-${location}`
+    return `Hyperliquid ${location} · ${platform}`
   }
   const accountContext = position.account.name.split(' · ').at(-1) || ''
   const isDirectWallet = accountContext.toLowerCase() === String(position.asset.network || '').toLowerCase() || accountContext === String(position.metadata?.chain_id || '')
-  return `${platform} · ${isDirectWallet ? 'native' : accountContext.toLowerCase().replace(/\s+/g, '-')}-${network}`
+  const venue = isDirectWallet ? 'Wallet' : accountContext || position.account.institution || 'Wallet'
+  return `${venue} · ${network} · ${platform}`
 }
 
 function cardSourceForPosition(position: Position) {
@@ -673,7 +669,8 @@ function Dashboard({ session }: { session: Session }) {
     positions.forEach((position) => {
       const assetClass = effectiveAssetClass(position.asset)
       const platforms = classes.get(assetClass) || new Map<string, number>()
-      const platform = digitalPositionLocation(position)
+      const location = digitalPositionLocation(position)
+      const platform = isDigitalAsset(position.asset) ? `${canonicalCryptoSymbol(position.asset.symbol)} · ${location}` : location
       platforms.set(platform, (platforms.get(platform) || 0) + Number(position.value_usd))
       classes.set(assetClass, platforms)
     })
@@ -707,7 +704,7 @@ function Dashboard({ session }: { session: Session }) {
         current.pricedValue += value
         current.pricedQuantity += quantity
       }
-      const platform = positionPlatform(position)
+      const platform = digitalPositionLocation(position)
       const detail = current.breakdown.get(platform) || { value: 0, quantity: 0, costBasis: 0, pricedValue: 0, pricedQuantity: 0 }
       detail.value += value
       detail.quantity += quantity

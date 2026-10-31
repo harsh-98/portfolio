@@ -1059,8 +1059,12 @@ async function ensureAsset(asset) {
 async function replaceSource(source, positions) {
   const [run] = await supabase("/rest/v1/sync_runs", { method: "POST", body: { owner_id: ownerId, source, status: "running", records_seen: positions.length }, prefer: "return=representation" });
   try {
+    const existingQuery = new URLSearchParams({ owner_id: `eq.${ownerId}`, source_key: `like.${source}:%`, select: "id,source_key,cost_basis_usd" });
+    const existing = await supabase(`/rest/v1/positions?${existingQuery}`);
+    const existingBySourceKey = new Map(existing.map((position) => [position.source_key, position]));
     const rows = [];
     for (const position of positions) {
+      const retainedCostBasis = existingBySourceKey.get(position.source_key)?.cost_basis_usd ?? null;
       rows.push({
         owner_id: ownerId,
         account_id: await ensureAccount(position.account),
@@ -1068,15 +1072,13 @@ async function replaceSource(source, positions) {
         quantity: position.quantity,
         price_usd: position.price_usd,
         value_usd: position.value_usd,
-        cost_basis_usd: position.cost_basis_usd ?? null,
+        cost_basis_usd: position.cost_basis_usd ?? retainedCostBasis,
         source_key: position.source_key,
         as_of: position.as_of ?? now,
         metadata: position.metadata ?? {},
       });
     }
     if (rows.length) await supabase("/rest/v1/positions?on_conflict=owner_id,source_key", { method: "POST", body: rows, prefer: "resolution=merge-duplicates,return=minimal" });
-    const existingQuery = new URLSearchParams({ owner_id: `eq.${ownerId}`, source_key: `like.${source}:%`, select: "id,source_key" });
-    const existing = await supabase(`/rest/v1/positions?${existingQuery}`);
     const keep = new Set(rows.map((row) => row.source_key));
     for (const stale of existing.filter((row) => !keep.has(row.source_key))) {
       await supabase(`/rest/v1/positions?id=eq.${stale.id}`, { method: "DELETE" });
