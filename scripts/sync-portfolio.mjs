@@ -347,6 +347,87 @@ async function loadDeBank(addresses, accessKey) {
   return positions;
 }
 
+async function loadOneInch(addresses, apiKey) {
+  if (!apiKey) throw new Error("Missing ONEINCH_API_KEY");
+  const positions = [];
+  const headers = { accept: "application/json", Authorization: `Bearer ${apiKey}` };
+  const baseUrl = "https://api.1inch.com/portfolio/portfolio/v5.0";
+  const chainNames = new Map([
+    [1, "Ethereum"], [10, "Optimism"], [56, "BNB Chain"], [100, "Gnosis"],
+    [137, "Polygon"], [324, "zkSync"], [480, "World Chain"], [999, "HyperEVM"],
+    [1101, "Polygon zkEVM"], [8453, "Base"], [42161, "Arbitrum"], [43114, "Avalanche"],
+    [59144, "Linea"], [81457, "Blast"],
+  ]);
+  const query = async (pathname, address) => {
+    const params = new URLSearchParams({ addresses: address });
+    const response = await fetchJson(`${baseUrl}${pathname}?${params}`, { headers });
+    return response?.result ?? response;
+  };
+  const classify = (symbol) => {
+    const normalized = String(symbol || "").toUpperCase();
+    if (["USDT", "USDC", "DAI", "USDE", "FRAX", "LUSD", "GHO", "USD0", "USDT0"].includes(normalized)) return "stablecoin";
+    if (["XAUT", "XAUT0", "PAXG"].includes(normalized)) return "gold";
+    return "crypto";
+  };
+  for (const requestedAddress of addresses) {
+    const [tokenRows, protocolRows] = await Promise.all([
+      query("/tokens/snapshot", requestedAddress),
+      query("/protocols/snapshot", requestedAddress),
+    ]);
+    for (const [kind, rows] of [["token", tokenRows], ["protocol", protocolRows]]) {
+      if (!Array.isArray(rows)) throw new Error(`Unexpected 1inch ${kind} snapshot response`);
+      for (const row of rows) {
+      if (row.status != null && number(row.status) !== 1) continue;
+      const rawValue = number(row.value_usd);
+      if (Math.abs(rawValue) < 0.01) continue;
+      const sign = number(row.asset_sign) < 0 ? -1 : 1;
+      const value = rawValue < 0 ? rawValue : rawValue * sign;
+      const underlying = Array.isArray(row.underlying_tokens) ? row.underlying_tokens.filter(Boolean) : [];
+      const detail = underlying.length === 1 ? underlying[0] : {};
+      const symbol = String(row.contract_symbol || detail.symbol || (kind === "protocol" ? "DEFI" : "TOKEN")).slice(0, 32).toUpperCase();
+      const responseAddress = String(row.address || "");
+      const address = /^0x0{40}$/i.test(responseAddress) || !responseAddress ? requestedAddress : responseAddress;
+      const chainId = number(row.chain_id ?? row.chain);
+      const network = chainNames.get(chainId) || String(chainId || "unknown");
+      const amount = number(detail.amount ?? detail.balance ?? row.amount);
+      const price = number(detail.price_to_usd ?? detail.price_usd ?? detail.price);
+      const protocolName = row.protocol_group_name || row.protocol_sub_group_name || row.protocol_group_id || "DeFi";
+      positions.push({
+        account: {
+          name: kind === "protocol" ? `Wallet · ${address} · ${protocolName}` : `Wallet · ${address} · ${network}`,
+          institution: "1inch",
+          account_type: kind === "protocol" ? "defi" : "wallet",
+          currency: "USD",
+          source: "oneinch",
+        },
+        asset: {
+          symbol: sign < 0 ? `${symbol}-DEBT`.slice(0, 32) : symbol,
+          name: row.contract_name || detail.name || (kind === "protocol" ? `${protocolName} position` : symbol),
+          asset_class: sign < 0 ? "liability" : classify(symbol),
+          currency: "USD",
+          network,
+          contract_address: row.contract_address || detail.contract_address || detail.address || null,
+          metadata: { chain_id: chainId, protocol_id: row.protocol_group_id || null, protocol_type: row.protocol_type || null },
+        },
+        quantity: amount ? amount * sign : sign,
+        price_usd: price || Math.abs(value),
+        value_usd: round(value),
+        source_key: `oneinch:${hash(address.toLowerCase())}:${chainId}:${kind}:${hash(String(row.index || `${row.contract_address}:${row.protocol_group_id}:${symbol}`))}`,
+        metadata: {
+          wallet: address === "unknown" ? null : `${address.slice(0, 6)}…${address.slice(-4)}`,
+          balance_type: kind === "protocol" ? "protocol_position" : "wallet_token",
+          protocol_id: row.protocol_group_id || null,
+          protocol_name: row.protocol_group_name || null,
+          locked: row.locked ?? null,
+          reward_tokens: row.reward_tokens || [],
+        },
+      });
+      }
+    }
+  }
+  return positions;
+}
+
 async function hyperliquidInfo(body) {
   return fetchJson("https://api.hyperliquid.xyz/info", {
     method: "POST",
@@ -807,7 +888,7 @@ function summarizeSpend(transactions) {
   return { records: transactions.length, by_type: byType, months: [...months].sort() };
 }
 
-const portfolioSources = ["rabby", "debank", "hyperliquid", "binance", "wio", "wio-stocks", "xtb"];
+const portfolioSources = ["rabby", "debank", "oneinch", "hyperliquid", "binance", "wio", "wio-stocks", "xtb"];
 const needsPortfolioSync = !only || portfolioSources.some((source) => only.has(source));
 const fx = needsPortfolioSync ? await loadFx() : {};
 const sourcePositions = {};
@@ -829,6 +910,10 @@ if (shouldRun("rabby")) {
 if (shouldRun("debank")) {
   const result = await captureSource("debank", () => loadDeBank(required("PORTFOLIO_EVM_ADDRESSES").split(",").map((value) => value.trim()).filter(Boolean), process.env.DEBANK_ACCESS_KEY?.trim() || serverCredentials.DEBANK_ACCESS_KEY?.trim()));
   if (result) sourcePositions.debank = result;
+}
+if (shouldRun("oneinch")) {
+  const result = await captureSource("oneinch", () => loadOneInch(required("PORTFOLIO_EVM_ADDRESSES").split(",").map((value) => value.trim()).filter(Boolean), process.env.ONEINCH_API_KEY?.trim() || serverCredentials.ONEINCH_API_KEY?.trim()));
+  if (result) sourcePositions.oneinch = result;
 }
 if (shouldRun("hyperliquid")) {
   const addressList = process.env.PORTFOLIO_HYPERLIQUID_ADDRESSES?.trim() || serverCredentials.PORTFOLIO_HYPERLIQUID_ADDRESSES?.trim() || required("PORTFOLIO_EVM_ADDRESSES");
@@ -953,6 +1038,13 @@ async function replaceSource(source, positions) {
 for (const [source, positions] of Object.entries(sourcePositions)) await replaceSource(source, positions);
 
 if (sourcePositions.debank) {
+  const staleRabbyQuery = new URLSearchParams({ owner_id: `eq.${ownerId}`, source_key: "like.rabby:%", select: "id" });
+  for (const stale of await supabase(`/rest/v1/positions?${staleRabbyQuery}`)) {
+    await supabase(`/rest/v1/positions?id=eq.${stale.id}`, { method: "DELETE" });
+  }
+}
+
+if (sourcePositions.oneinch) {
   const staleRabbyQuery = new URLSearchParams({ owner_id: `eq.${ownerId}`, source_key: "like.rabby:%", select: "id" });
   for (const stale of await supabase(`/rest/v1/positions?${staleRabbyQuery}`)) {
     await supabase(`/rest/v1/positions?id=eq.${stale.id}`, { method: "DELETE" });
