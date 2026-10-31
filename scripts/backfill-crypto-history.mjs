@@ -62,13 +62,16 @@ function weeklyDates(start, end) {
   return dates;
 }
 
-const addresses = required("PORTFOLIO_EVM_ADDRESSES").split(",").map((value) => value.trim()).filter(Boolean);
+const requestedAddresses = argValue("addresses", "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
+const addresses = required("PORTFOLIO_EVM_ADDRESSES").split(",").map((value) => value.trim()).filter((value) => !requestedAddresses.length || requestedAddresses.includes(value.toLowerCase()));
+if (!addresses.length) throw new Error("No configured wallet matched --addresses");
 const [chainsData, activities] = await Promise.all([
   goldRush("/chains/"),
   Promise.all(addresses.map((address) => goldRush(`/address/${address}/activity/`))),
 ]);
 const chainCapabilities = new Map((chainsData.items || []).map((chain) => [String(chain.name), chain]));
-const configuredChains = process.env.GOLDRUSH_CHAIN_NAMES?.split(",").map((value) => value.trim()).filter(Boolean);
+const requestedChains = argValue("chains", "").split(",").map((value) => value.trim()).filter(Boolean);
+const configuredChains = requestedChains.length ? requestedChains : process.env.GOLDRUSH_CHAIN_NAMES?.split(",").map((value) => value.trim()).filter(Boolean);
 const plans = [];
 for (let index = 0; index < addresses.length; index += 1) {
   const activity = activities[index]?.items || [];
@@ -157,7 +160,7 @@ for (const plan of plans) {
       await supabase("/rest/v1/crypto_backfill_checkpoints?on_conflict=owner_id,wallet_hash,chain_name,snapshot_date", { method: "POST", body: { owner_id: ownerId, wallet_hash: plan.walletHash, chain_name: plan.chainName, snapshot_date: date, status: "success", records_written: rows.length, message: null, completed_at: new Date().toISOString() }, prefer: "resolution=merge-duplicates,return=minimal" });
       completed += 1;
       written += rows.length;
-      console.log(`${date} ${plan.chainName} ${plan.address.slice(0, 6)}…: ${rows.length} assets >= $${minimumValue}`);
+      console.log(`${date} ${plan.chainName} ${plan.address.slice(0, 6)}…: ${rows.length} retained chain positions >= $${minimumValue} (not the wallet total)`);
     } catch (error) {
       await supabase("/rest/v1/crypto_backfill_checkpoints?on_conflict=owner_id,wallet_hash,chain_name,snapshot_date", { method: "POST", body: { owner_id: ownerId, wallet_hash: plan.walletHash, chain_name: plan.chainName, snapshot_date: date, status: "failed", records_written: 0, message: String(error.message).slice(0, 300), completed_at: new Date().toISOString() }, prefer: "resolution=merge-duplicates,return=minimal" });
       console.error(`${date} ${plan.chainName}: ${error.message}`);

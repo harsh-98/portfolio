@@ -106,6 +106,13 @@ function sampleEvenly<T>(values: T[], maximum: number) {
   return Array.from({ length: maximum }, (_, index) => values[Math.round((index * (values.length - 1)) / (maximum - 1))])
 }
 
+function cryptoWeekBucket(date: string) {
+  const value = new Date(`${date}T00:00:00Z`)
+  const daysSinceTuesday = (value.getUTCDay() + 5) % 7
+  value.setUTCDate(value.getUTCDate() - daysSinceTuesday)
+  return value.toISOString().slice(0, 10)
+}
+
 const money = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
@@ -708,7 +715,8 @@ function Dashboard({ session }: { session: Session }) {
     const grouped = new Map<string, HistoryPoint>()
     positionSnapshots.forEach((snapshot) => {
       if (!snapshot.asset || !snapshot.account || !isDigitalAsset(snapshot.asset)) return
-      const current = grouped.get(snapshot.snapshot_date) || { date: snapshot.snapshot_date, total: 0, platforms: new Map<string, number>(), assets: new Map<string, Map<string, AssetBalance>>() }
+      const week = cryptoWeekBucket(snapshot.snapshot_date)
+      const current = grouped.get(week) || { date: week, total: 0, platforms: new Map<string, number>(), assets: new Map<string, Map<string, AssetBalance>>() }
       const value = Number(snapshot.value_usd)
       const platform = platformIdentity(snapshot.account, snapshot.source_key)
       const network = snapshot.asset.network ? ` · ${snapshot.asset.network}` : ''
@@ -721,15 +729,17 @@ function Dashboard({ session }: { session: Session }) {
       asset.quantity += Number(snapshot.quantity || 0)
       platformAssets.set(assetKey, asset)
       current.assets.set(platform, platformAssets)
-      grouped.set(snapshot.snapshot_date, current)
+      grouped.set(week, current)
     })
     return [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date))
   }, [positionSnapshots])
   const cryptoPlatforms = useMemo(() => [...new Set(cryptoHistory.flatMap((point) => [...point.platforms.keys()]))].sort(), [cryptoHistory])
-  const selectedCryptoHistory = useMemo(() => cryptoHistory.map((point) => ({
-    ...point,
-    total: selectedCryptoPlatform === 'all' ? point.total : point.platforms.get(selectedCryptoPlatform) || 0,
-  })), [cryptoHistory, selectedCryptoPlatform])
+  const selectedCryptoHistory = useMemo(() => cryptoHistory
+    .filter((point) => selectedCryptoPlatform === 'all' || point.platforms.has(selectedCryptoPlatform))
+    .map((point) => ({
+      ...point,
+      total: selectedCryptoPlatform === 'all' ? point.total : point.platforms.get(selectedCryptoPlatform) as number,
+    })), [cryptoHistory, selectedCryptoPlatform])
   const rangedCryptoHistory = useMemo(() => {
     if (cryptoRange === 'ALL' || !selectedCryptoHistory.length) return selectedCryptoHistory
     const latest = new Date(`${selectedCryptoHistory[selectedCryptoHistory.length - 1].date}T00:00:00Z`)
@@ -1008,7 +1018,7 @@ function Dashboard({ session }: { session: Session }) {
                 <article className="panel history-method-panel">
                   <div><p className="eyebrow">VALUATION METHOD</p><h2>Observed vs reconstructed</h2></div>
                   <p><strong>Observed</strong> snapshots use the balances and USD prices returned during each weekly sync. They are the source of truth going forward.</p>
-                  <p><strong>Reconstructed</strong> history uses historical balances at each weekly block plus that asset’s USD price on the same date. It will be labelled separately because DeFi receipt tokens and unsupported protocols may not reconstruct perfectly.</p>
+                  <p><strong>Reconstructed</strong> history uses historical balances at each weekly block plus that asset’s USD price on the same date. Chain observations are combined into Tuesday-to-Monday week buckets so a chain-only zero never appears as the wallet’s total. It will be labelled separately because DeFi receipt tokens and unsupported protocols may not reconstruct perfectly.</p>
                   <span>Only positions worth at least $100 on that historical date are retained in the backfill.</span>
                 </article>
               </div>

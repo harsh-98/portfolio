@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "sync:portfolio": "node scripts/sync-portfolio.mjs",
     "backfill:crypto": "node scripts/backfill-crypto-history.mjs",
+    "backfill:linea": "node scripts/backfill-linea-history.mjs",
     "typecheck": "tsc -b"
   },
   "dependencies": {

@@ -59,6 +59,10 @@ npm run sync:portfolio -- --dry-run
 
 Then provide the server-side variables in `.env.example` through a protected environment and run without `--dry-run`. Source-specific refreshes are supported with `--only=rabby,binance,wio,xtb`.
 
+Historical crypto backfills are checkpointed by wallet, chain, and week. Use `--addresses=0x...[,0x...]` and `--chains=eth-mainnet[,base-mainnet]` with `scripts/backfill-crypto-history.mjs` to prioritize configured wallets or supported chains; the address filter cannot add wallets absent from `PORTFOLIO_EVM_ADDRESSES`.
+
+Linea native ETH history uses the public Linea archive RPC for historical balances and Binance public ETH/USDT daily closes for same-date valuation. Run `npm run backfill:linea -- --from=YYYY-MM-DD --to=YYYY-MM-DD`; it shares the same resumable checkpoint table and USD 100 default threshold.
+
 The protected GitHub Action is ready for Rabby and Binance snapshots and can be run manually. A daily 08:00 Asia/Kolkata schedule can be enabled after its six values are explicitly placed in encrypted GitHub Actions secrets. Wio and XTB are imported locally because their exports are intentionally not uploaded to GitHub.
 
 Rabby cost basis is an estimate only when recent on-chain history contains priced external receipts. Internal transfers between the configured wallets are excluded; positions without enough evidence remain explicitly unavailable.
