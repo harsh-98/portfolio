@@ -97,6 +97,7 @@ input:focus, select:focus { border-color: #4c9a75; box-shadow: 0 0 0 3px rgba(76
 .topbar-brand svg { color: var(--green); }
 .workspace-status { display: flex; align-items: center; gap: 8px; color: #738089; font-size: 10px; }
 .status-dot { width: 6px; height: 6px; background: #56bd88; border-radius: 50%; box-shadow: 0 0 0 4px rgba(86,189,136,.08); }
+.status-dot.delayed { background: #d5a454; box-shadow: 0 0 0 4px rgba(213,164,84,.08); }
 .topbar-actions { justify-self: end; display: flex; align-items: center; gap: 14px; }
 .notional-toggle { display: flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid #252d33; border-radius: 7px; background: #0d1216; }
 .notional-toggle > span { padding: 0 6px; color: #66727a; font-size: 8px; text-transform: uppercase; letter-spacing: .06em; }

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
@@ -174,6 +174,48 @@ function canonicalCryptoSymbol(symbol: string) {
   if (['WETH', 'STETH', 'WSTETH', 'RETH', 'WEETH', 'EETH'].includes(normalized)) return 'ETH'
   if (['XAUT0', 'XAUT'].includes(normalized)) return 'XAUT'
   return normalized
+}
+
+function livePriceSymbol(symbol: string) {
+  const normalized = symbol.toUpperCase()
+  if (['WETH', 'STETH', 'WSTETH', 'RETH', 'WEETH', 'EETH'].includes(normalized)) return 'ETH'
+  if (['WBTC', 'UBTC', 'BTCB'].includes(normalized)) return 'BTC'
+  if (normalized === 'XAUT') return 'XAUT0'
+  return normalized
+}
+
+async function fetchLiveCryptoPrices() {
+  const [binanceResult, hyperliquidResult] = await Promise.allSettled([
+    fetch('https://api.binance.com/api/v3/ticker/price').then(async (response) => {
+      if (!response.ok) throw new Error(`Binance ${response.status}`)
+      return response.json() as Promise<Array<{ symbol: string; price: string }>>
+    }),
+    fetch('https://api.hyperliquid.xyz/info', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'allMids' }),
+    }).then(async (response) => {
+      if (!response.ok) throw new Error(`Hyperliquid ${response.status}`)
+      return response.json() as Promise<Record<string, string>>
+    }),
+  ])
+  const prices = new Map<string, number>()
+  if (binanceResult.status === 'fulfilled') {
+    binanceResult.value.forEach(({ symbol, price }) => {
+      if (!symbol.endsWith('USDT')) return
+      const value = Number(price)
+      if (Number.isFinite(value) && value > 0) prices.set(symbol.slice(0, -4), value)
+    })
+  }
+  if (hyperliquidResult.status === 'fulfilled') {
+    Object.entries(hyperliquidResult.value).forEach(([symbol, rawPrice]) => {
+      const value = Number(rawPrice)
+      if (Number.isFinite(value) && value > 0) prices.set(symbol.toUpperCase(), value)
+    })
+  }
+  ;['USDT', 'USDC', 'DAI', 'USDE', 'USD1', 'FRAX', 'LUSD', 'GHO'].forEach((symbol) => prices.set(symbol, 1))
+  if (!prices.size) throw new Error('Live crypto feeds unavailable')
+  return prices
 }
 
 function effectiveAssetClass(asset: { symbol: string; asset_class: AssetClass }) {
@@ -490,6 +532,11 @@ function Dashboard({ session }: { session: Session }) {
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>(() => localStorage.getItem('northstar-currency') === 'INR' ? 'INR' : 'USD')
   const [cryptoRange, setCryptoRange] = useState<CryptoRange>('1Y')
   const [selectedCryptoPlatform, setSelectedCryptoPlatform] = useState('all')
+  const [lastLivePriceAt, setLastLivePriceAt] = useState<Date | null>(null)
+  const [livePriceDelayed, setLivePriceDelayed] = useState(false)
+  const [lastStockPriceAt, setLastStockPriceAt] = useState<Date | null>(null)
+  const [stockPriceDelayed, setStockPriceDelayed] = useState(false)
+  const positionsRef = useRef<Position[]>([])
   const inrPerUsd = useMemo(() => {
     const indiaPosition = positions.find((position) => position.source_key === 'india:inr')
     const quantity = Number(indiaPosition?.quantity || 0)
@@ -543,6 +590,64 @@ function Dashboard({ session }: { session: Session }) {
   }, [])
 
   useEffect(() => { void load() }, [load])
+  useEffect(() => { positionsRef.current = positions }, [positions])
+
+  const refreshLiveCryptoPrices = useCallback(async () => {
+    try {
+      const prices = await fetchLiveCryptoPrices()
+      setPositions((current) => current.map((position) => {
+        const assetClass = effectiveAssetClass(position.asset)
+        if (!['crypto', 'stablecoin', 'gold'].includes(assetClass)) return position
+        const price = prices.get(livePriceSymbol(position.asset.symbol))
+        if (!price) return position
+        return { ...position, price_usd: price, value_usd: Math.round(Number(position.quantity) * price * 100) / 100 }
+      }))
+      setLastLivePriceAt(new Date())
+      setLivePriceDelayed(false)
+    } catch {
+      setLivePriceDelayed(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshLiveCryptoPrices()
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshLiveCryptoPrices()
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [refreshLiveCryptoPrices])
+
+  const refreshStockPrices = useCallback(async () => {
+    const symbols = [...new Set(positionsRef.current
+      .filter((position) => position.asset.asset_class === 'equity')
+      .map((position) => canonicalEquitySymbol(position.asset.symbol)))]
+    if (!symbols.length) return
+    const { data, error: quoteError } = await supabase.functions.invoke('market-prices', { body: { symbols } })
+    if (quoteError || !data?.prices) {
+      setStockPriceDelayed(true)
+      return
+    }
+    const prices = new Map<string, number>(Object.entries(data.prices).map(([symbol, price]) => [symbol.toUpperCase(), Number(price)]))
+    setPositions((current) => current.map((position) => {
+      if (position.asset.asset_class !== 'equity') return position
+      const price = prices.get(canonicalEquitySymbol(position.asset.symbol))
+      if (!price || !Number.isFinite(price)) return position
+      return { ...position, price_usd: price, value_usd: Math.round(Number(position.quantity) * price * 100) / 100 }
+    }))
+    setLastStockPriceAt(new Date(data.as_of || Date.now()))
+    setStockPriceDelayed(false)
+  }, [])
+
+  useEffect(() => {
+    if (positions.length && !lastStockPriceAt) void refreshStockPrices()
+  }, [lastStockPriceAt, positions.length, refreshStockPrices])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refreshStockPrices()
+    }, 60000)
+    return () => window.clearInterval(timer)
+  }, [refreshStockPrices])
 
   const total = useMemo(() => positions.reduce((sum, position) => sum + Number(position.value_usd), 0), [positions])
   const allocation = useMemo(() => {
@@ -885,7 +990,7 @@ function Dashboard({ session }: { session: Session }) {
       <main className="dashboard-main">
         <header className="topbar">
           <div className="topbar-left"><button className="menu-button" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={21} /></button><button className="topbar-brand" onClick={() => chooseView('overview')}><Sparkles size={16} />Northstar</button></div>
-          <div className="workspace-status"><span className="status-dot" />Private shared workspace</div>
+          <div className="workspace-status" title={`Crypto: ${livePriceDelayed ? 'delayed' : lastLivePriceAt ? `updated ${lastLivePriceAt.toLocaleTimeString()}` : 'waiting for first update'} · Stocks: ${stockPriceDelayed ? '1m feed unavailable; using imported snapshot' : lastStockPriceAt ? `updated ${lastStockPriceAt.toLocaleTimeString()}` : 'waiting for first update'}`}><span className={`status-dot ${livePriceDelayed || stockPriceDelayed ? 'delayed' : ''}`} />Crypto 5s · Stocks 1m</div>
           <div className="topbar-actions"><div className="notional-toggle" aria-label="Display notional currency"><span>Notional</span>{(['USD', 'INR'] as DisplayCurrency[]).map((currency) => <button key={currency} className={displayCurrency === currency ? 'active' : ''} onClick={() => setDisplayCurrency(currency)}>{currency}</button>)}</div><div className="profile-wrap"><button className="profile-button" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen}><span>{session.user.email?.slice(0, 1).toUpperCase()}</span><ChevronDown size={15} /></button>{profileOpen && <div className="profile-menu"><strong>{session.user.email}</strong><small>Approved portfolio access</small><button onClick={() => supabase.auth.signOut()}><LogOut size={15} />Sign out</button></div>}</div></div>
         </header>
 
