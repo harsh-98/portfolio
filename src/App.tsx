@@ -158,7 +158,8 @@ function canonicalEquitySymbol(symbol: string) {
 
 function shortAddress(value: string) {
   const match = value.match(/0x[a-fA-F0-9]{10,}/)
-  return match ? `${match[0].slice(0, 6)}…${match[0].slice(-4)}` : null
+  const normalized = match?.[0].toLowerCase()
+  return normalized ? `${normalized.slice(0, 6)}…${normalized.slice(-4)}` : null
 }
 
 function platformIdentity(account: Pick<Account, 'name' | 'institution'>, sourceKey = '') {
@@ -178,6 +179,26 @@ function platformIdentity(account: Pick<Account, 'name' | 'institution'>, source
 
 function positionPlatform(position: Position) {
   return platformIdentity(position.account, position.source_key)
+}
+
+function networkSlug(network: string | null) {
+  const normalized = String(network || 'chain').toLowerCase()
+  const aliases: Record<string, string> = { ethereum: 'eth', arbitrum: 'arb', optimism: 'op', polygon: 'pol', 'bnb chain': 'bnb', hyperevm: 'hype', hyperliquid: 'hyperliquid' }
+  return aliases[normalized] || normalized.replace(/\s+/g, '-')
+}
+
+function digitalPositionLocation(position: Position) {
+  const platform = positionPlatform(position)
+  if (!platform.startsWith('0x')) return platform
+  const network = networkSlug(position.asset.network)
+  const identity = `${position.account.name} ${position.account.institution}`.toLowerCase()
+  if (identity.includes('hyperliquid')) {
+    const location = identity.includes('lending') ? 'lending' : identity.includes('staking') ? 'staking' : identity.includes('vault') ? 'vault' : identity.includes('perps') ? 'perps' : 'spot'
+    return `${platform} · hyperliquid-${location}`
+  }
+  const accountContext = position.account.name.split(' · ').at(-1) || ''
+  const isDirectWallet = accountContext.toLowerCase() === String(position.asset.network || '').toLowerCase() || accountContext === String(position.metadata?.chain_id || '')
+  return `${platform} · ${isDirectWallet ? 'native' : accountContext.toLowerCase().replace(/\s+/g, '-')}-${network}`
 }
 
 function cardSourceForPosition(position: Position) {
@@ -484,7 +505,7 @@ function Dashboard({ session }: { session: Session }) {
     positions.forEach((position) => {
       const assetClass = effectiveAssetClass(position.asset)
       const platforms = classes.get(assetClass) || new Map<string, number>()
-      const platform = positionPlatform(position)
+      const platform = digitalPositionLocation(position)
       platforms.set(platform, (platforms.get(platform) || 0) + Number(position.value_usd))
       classes.set(assetClass, platforms)
     })
@@ -862,7 +883,7 @@ function Dashboard({ session }: { session: Session }) {
                 </article>
 
                 <aside className={overviewPanelClass('spending', 'overview-spending')}>
-                  <div className="panel-heading"><div><p className="eyebrow">CARD ACCOUNTS</p><h2>Balances &amp; activity</h2></div><div className="panel-heading-actions"><span className="panel-badge">{formatMoney(cardBalanceTotal)}</span><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'spending' ? null : 'spending')} aria-label="Expand card activity">{expandedPanel === 'spending' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="panel-heading"><div><p className="eyebrow">CARD ACCOUNTS</p><h2>Balances &amp; activity</h2></div><div className="panel-heading-actions"><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'spending' ? null : 'spending')} aria-label="Expand card activity">{expandedPanel === 'spending' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className="month-selector"><button onClick={() => shiftSpendMonth(-1)} disabled={spendMonth <= minSpendMonth} aria-label="Previous month"><ChevronLeft size={13} /></button><strong>{selectedMonthLabel}</strong><button onClick={() => shiftSpendMonth(1)} disabled={spendMonth >= maxSpendMonth} aria-label="Next month"><ChevronRight size={13} /></button></div>
                   <div className="source-toggles">{[{ key: 'ether.fi', label: 'Ether.fi' }, { key: 'kast', label: 'KAST' }, { key: 'ethena', label: 'Ethena' }].map((source) => <label key={source.key}><input type="checkbox" checked={selectedCardSources.includes(source.key)} onChange={() => toggleCardSource(source.key)} /><span>{source.label}</span></label>)}</div>
                   <div className="activity-type-toggles">{[{ key: 'purchase', label: 'Transactions' }, { key: 'refund', label: 'Refunds' }, { key: 'cashback', label: 'Cashback' }].map((type) => <label key={type.key}><input type="checkbox" checked={selectedActivityTypes.includes(type.key)} onChange={() => toggleActivityType(type.key)} /><span>{type.label}</span></label>)}</div>

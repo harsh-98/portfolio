@@ -414,6 +414,9 @@ async function loadOneInch(addresses, apiKey) {
         value_usd: round(value),
         source_key: `oneinch:${hash(address.toLowerCase())}:${chainId}:${kind}:${hash(String(row.index || `${row.contract_address}:${row.protocol_group_id}:${symbol}`))}`,
         metadata: {
+          wallet_address: address.toLowerCase(),
+          chain_id: chainId,
+          contract_address: String(row.contract_address || detail.contract_address || detail.address || "native").toLowerCase(),
           wallet: address === "unknown" ? null : `${address.slice(0, 6)}…${address.slice(-4)}`,
           balance_type: kind === "protocol" ? "protocol_position" : "wallet_token",
           protocol_id: row.protocol_group_id || null,
@@ -426,6 +429,47 @@ async function loadOneInch(addresses, apiKey) {
     }
   }
   return positions;
+}
+
+async function loadWatchedTokens(addresses, watchConfig) {
+  if (!watchConfig) return [];
+  const tokens = JSON.parse(watchConfig);
+  if (!Array.isArray(tokens)) throw new Error("PORTFOLIO_WATCH_TOKENS_JSON must be a JSON array");
+  const positions = [];
+  const stablecoins = new Set(["USDT", "USDC", "DAI", "USDE", "FRAX", "LUSD", "GHO", "USD0", "USDT0"]);
+  const goldTokens = new Set(["XAUT", "XAUT0", "PAXG"]);
+  for (const token of tokens) {
+    const contract = String(token.contract_address).toLowerCase();
+    const priceResponse = token.binance_pair ? await fetchJson(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(token.binance_pair)}`) : null;
+    const price = number(priceResponse?.price ?? token.price_usd);
+    if (!price) throw new Error(`No price available for watched token ${token.symbol}`);
+    for (const address of addresses) {
+      const callData = `0x70a08231${address.toLowerCase().replace(/^0x/, "").padStart(64, "0")}`;
+      const response = await fetchJson(token.rpc_url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_call", params: [{ to: contract, data: callData }, "latest"] }) });
+      if (response.error) throw new Error(`${token.symbol} RPC: ${response.error.message || "request failed"}`);
+      const quantity = Number(BigInt(response.result || "0x0")) / 10 ** number(token.decimals);
+      const value = quantity * price;
+      if (value >= 0.01) {
+        const symbol = String(token.symbol).slice(0, 32).toUpperCase();
+        positions.push({
+          account: { name: `Wallet · ${address} · ${token.network}`, institution: "Direct RPC", account_type: "wallet", currency: "USD", source: "oneinch" },
+          asset: { symbol, name: token.name || symbol, asset_class: stablecoins.has(symbol) ? "stablecoin" : goldTokens.has(symbol) ? "gold" : "crypto", currency: "USD", network: token.network, contract_address: contract, metadata: { chain_id: number(token.chain_id), provider: "Direct RPC" } },
+          quantity,
+          price_usd: price,
+          value_usd: round(value),
+          source_key: `oneinch:${hash(address.toLowerCase())}:${number(token.chain_id)}:rpc:${hash(contract)}`,
+          metadata: { wallet_address: address.toLowerCase(), chain_id: number(token.chain_id), contract_address: contract, wallet: `${address.slice(0, 6)}…${address.slice(-4)}`, balance_type: "wallet_token", provider: "Direct RPC fallback", pricing_source: token.binance_pair || "configured" },
+        });
+      }
+    }
+  }
+  return positions;
+}
+
+function mergeOneInchWithFallback(oneInchPositions, fallbackPositions) {
+  const identity = (position) => `${position.metadata?.wallet_address || ""}|${position.metadata?.chain_id || position.asset.network || ""}|${String(position.metadata?.contract_address || position.asset.contract_address || "native").toLowerCase()}`;
+  const covered = new Set(oneInchPositions.map(identity));
+  return [...oneInchPositions, ...fallbackPositions.filter((position) => !covered.has(identity(position)))];
 }
 
 async function hyperliquidInfo(body) {
@@ -912,7 +956,16 @@ if (shouldRun("debank")) {
   if (result) sourcePositions.debank = result;
 }
 if (shouldRun("oneinch")) {
-  const result = await captureSource("oneinch", () => loadOneInch(required("PORTFOLIO_EVM_ADDRESSES").split(",").map((value) => value.trim()).filter(Boolean), process.env.ONEINCH_API_KEY?.trim() || serverCredentials.ONEINCH_API_KEY?.trim()));
+  const result = await captureSource("oneinch", async () => {
+    const addresses = required("PORTFOLIO_EVM_ADDRESSES").split(",").map((value) => value.trim()).filter(Boolean);
+    const oneInchPositions = await loadOneInch(addresses, process.env.ONEINCH_API_KEY?.trim() || serverCredentials.ONEINCH_API_KEY?.trim());
+    const defaultWatchFile = process.env.PORTFOLIO_SERVER_KEY_FILE?.trim() ? path.join(path.dirname(process.env.PORTFOLIO_SERVER_KEY_FILE.trim()), "portfolio-watch-tokens.json") : null;
+    const watchConfig = process.env.PORTFOLIO_WATCH_TOKENS_JSON?.trim()
+      || serverCredentials.PORTFOLIO_WATCH_TOKENS_JSON?.trim()
+      || (defaultWatchFile ? await fs.readFile(defaultWatchFile, "utf8").catch(() => "") : "");
+    const fallbackPositions = await loadWatchedTokens(addresses, watchConfig);
+    return mergeOneInchWithFallback(oneInchPositions, fallbackPositions);
+  });
   if (result) sourcePositions.oneinch = result;
 }
 if (shouldRun("hyperliquid")) {
