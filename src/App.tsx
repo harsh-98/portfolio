@@ -109,7 +109,8 @@ function sampleEvenly<T>(values: T[], maximum: number) {
 const money = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
 })
 
 const moneyCents = new Intl.NumberFormat('en-US', {
@@ -128,7 +129,23 @@ function formatMoneyCents(value: number) {
 }
 
 function formatAmount(value: number) {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 6 }).format(value)
+  return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(value)
+}
+
+async function fetchAllPositionSnapshots() {
+  const pageSize = 1000
+  const rows: PositionSnapshot[] = []
+  for (let from = 0; ; from += pageSize) {
+    const result = await supabase
+      .from('position_snapshots')
+      .select('snapshot_date,source_key,quantity,price_usd,value_usd,account:accounts(name,institution),asset:assets(symbol,name,asset_class,network)')
+      .order('snapshot_date', { ascending: true })
+      .order('source_key', { ascending: true })
+      .range(from, from + pageSize - 1)
+    if (result.error) return { data: rows, error: result.error }
+    rows.push(...((result.data || []) as unknown as PositionSnapshot[]))
+    if ((result.data || []).length < pageSize) return { data: rows, error: null }
+  }
 }
 
 function spendCashback(transaction: SpendTransaction) {
@@ -475,7 +492,8 @@ function Dashboard({ session }: { session: Session }) {
   const currencyFormatter = useMemo(() => new Intl.NumberFormat(displayCurrency === 'INR' ? 'en-IN' : 'en-US', {
     style: 'currency',
     currency: displayCurrency,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }), [displayCurrency])
   const currencyFormatterCents = useMemo(() => new Intl.NumberFormat(displayCurrency === 'INR' ? 'en-IN' : 'en-US', {
     style: 'currency',
@@ -498,7 +516,7 @@ function Dashboard({ session }: { session: Session }) {
       supabase.from('positions').select('*, account:accounts(*), asset:assets(*)').order('value_usd', { ascending: false }),
       supabase.from('accounts').select('*').order('name'),
       supabase.from('portfolio_snapshots').select('*').order('snapshot_date', { ascending: true }).limit(90),
-      supabase.from('position_snapshots').select('snapshot_date,source_key,quantity,price_usd,value_usd,account:accounts(name,institution),asset:assets(symbol,name,asset_class,network)').order('snapshot_date', { ascending: true }).limit(10000),
+      fetchAllPositionSnapshots(),
       supabase.from('sync_runs').select('id,source,status,records_written,message,started_at,finished_at').order('started_at', { ascending: false }).limit(20),
       supabase.from('brokerage_transactions').select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,account:accounts(name,institution),asset:assets(symbol,name)').order('event_time', { ascending: false }).limit(1000),
       supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status,transaction_type,metadata').order('occurred_at', { ascending: false }).limit(5000),
@@ -509,7 +527,7 @@ function Dashboard({ session }: { session: Session }) {
     setPositions((positionsResult.data || []) as unknown as Position[])
     setAccounts((accountsResult.data || []) as Account[])
     setSnapshots((snapshotsResult.data || []) as Snapshot[])
-    setPositionSnapshots((positionSnapshotsResult.data || []) as unknown as PositionSnapshot[])
+    setPositionSnapshots(positionSnapshotsResult.data || [])
     setSyncRuns((syncRunsResult.data || []) as SyncRun[])
     setBrokerageTransactions((brokerageResult.data || []) as unknown as BrokerageTransaction[])
     setSpendTransactions((spendResult.data || []) as SpendTransaction[])
@@ -685,14 +703,24 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'realizedPnl', headerName: 'Realized P/L', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
   ], [formatMoney, formatMoneyCents])
   const cryptoHistory = useMemo(() => {
-    const grouped = new Map<string, { date: string; total: number; platforms: Map<string, number> }>()
+    type AssetBalance = { label: string; value: number; quantity: number }
+    type HistoryPoint = { date: string; total: number; platforms: Map<string, number>; assets: Map<string, Map<string, AssetBalance>> }
+    const grouped = new Map<string, HistoryPoint>()
     positionSnapshots.forEach((snapshot) => {
       if (!snapshot.asset || !snapshot.account || !isDigitalAsset(snapshot.asset)) return
-      const current = grouped.get(snapshot.snapshot_date) || { date: snapshot.snapshot_date, total: 0, platforms: new Map<string, number>() }
+      const current = grouped.get(snapshot.snapshot_date) || { date: snapshot.snapshot_date, total: 0, platforms: new Map<string, number>(), assets: new Map<string, Map<string, AssetBalance>>() }
       const value = Number(snapshot.value_usd)
       const platform = platformIdentity(snapshot.account, snapshot.source_key)
+      const network = snapshot.asset.network ? ` · ${snapshot.asset.network}` : ''
+      const assetKey = `${snapshot.asset.symbol}${network}`
+      const platformAssets = current.assets.get(platform) || new Map<string, AssetBalance>()
+      const asset = platformAssets.get(assetKey) || { label: assetKey, value: 0, quantity: 0 }
       current.total += value
       current.platforms.set(platform, (current.platforms.get(platform) || 0) + value)
+      asset.value += value
+      asset.quantity += Number(snapshot.quantity || 0)
+      platformAssets.set(assetKey, asset)
+      current.assets.set(platform, platformAssets)
       grouped.set(snapshot.snapshot_date, current)
     })
     return [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date))
@@ -719,8 +747,13 @@ function Dashboard({ session }: { session: Session }) {
   const priorCryptoPoint = cryptoHistory[cryptoHistory.length - 2]
   const cryptoWeeklyChange = latestCryptoPoint && priorCryptoPoint ? latestCryptoPoint.total - priorCryptoPoint.total : 0
   const cryptoSinceStart = latestCryptoPoint && firstCryptoPoint ? latestCryptoPoint.total - firstCryptoPoint.total : 0
+  const cryptoCompositionTotal = latestCryptoPoint
+    ? selectedCryptoPlatform === 'all' ? latestCryptoPoint.total : latestCryptoPoint.platforms.get(selectedCryptoPlatform) || 0
+    : 0
   const cryptoPlatformRows = latestCryptoPoint
-    ? [...latestCryptoPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, start: firstRangeCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
+    ? selectedCryptoPlatform === 'all'
+      ? [...latestCryptoPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, quantity: null as number | null, start: firstRangeCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
+      : [...(latestCryptoPoint.assets.get(selectedCryptoPlatform)?.values() || [])].map((asset) => ({ platform: asset.label, value: asset.value, quantity: asset.quantity, start: firstRangeCryptoPoint?.assets.get(selectedCryptoPlatform)?.get(asset.label)?.value || 0 })).sort((a, b) => b.value - a.value)
     : []
   const realizedXtb = brokerageTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
   const cardBalances = positions.filter((position) => { const source = cardSourceForPosition(position); return source && selectedCardSources.includes(source) }).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
@@ -934,7 +967,7 @@ function Dashboard({ session }: { session: Session }) {
                   <div className="source-toggles">{[{ key: 'ether.fi', label: 'Ether.fi' }, { key: 'kast', label: 'KAST' }, { key: 'ethena', label: 'Ethena' }].map((source) => <label key={source.key}><input type="checkbox" checked={selectedCardSources.includes(source.key)} onChange={() => toggleCardSource(source.key)} /><span>{source.label}</span></label>)}</div>
                   <div className="activity-type-toggles">{[{ key: 'purchase', label: 'Transactions' }, { key: 'refund', label: 'Refunds' }, { key: 'cashback', label: 'Cashback' }].map((type) => <label key={type.key}><input type="checkbox" checked={selectedActivityTypes.includes(type.key)} onChange={() => toggleActivityType(type.key)} /><span>{type.label}</span></label>)}</div>
                   <div className="card-activity-summary"><div><span>Current balance</span><strong>{formatMoneyCents(cardBalanceTotal)}</strong></div><div><span>Cleared spend</span><strong>{formatMoneyCents(recentSpendTotal)}</strong></div><div><span>Refunds</span><strong className="value-positive">+{formatMoneyCents(recentRefundTotal)}</strong></div><div><span>Cashback</span><strong className="value-positive">+{formatMoneyCents(recentCashbackTotal)}</strong></div></div>
-                  <div className="spend-section"><div className="spend-section-title"><span>Balances</span><small>{cardBalances.length}</small></div><div className="balance-list">{cardBalances.map((position) => <div key={position.id}><span><strong>{position.asset.symbol}</strong><small>{position.account.name}</small></span><b>{formatMoney(Number(position.value_usd))}</b></div>)}</div></div>
+                  <div className="spend-section"><div className="spend-section-title"><span>Balances</span><small>{cardBalances.length}</small></div><div className="balance-list">{cardBalances.map((position) => <div key={position.id}><span><strong>{position.asset.symbol}</strong><small>{formatAmount(Number(position.quantity))} units · {position.account.name} · as of {new Date(position.as_of).toLocaleDateString()}</small></span><b>{formatMoney(Number(position.value_usd))}</b></div>)}</div></div>
                   <div className="spend-section activity-section unified-activity"><div className="spend-section-title"><span>Transaction events</span><small>{visibleCardActivity.length}</small></div><div className="recent-spend-list">{visibleCardActivity.map((transaction) => {
                     const cashback = spendCashback(transaction)
                     const transactionUrl = spendTransactionUrl(transaction)
@@ -968,8 +1001,8 @@ function Dashboard({ session }: { session: Session }) {
                 </article>
 
                 <article className="panel history-address-panel">
-                  <div className="panel-heading"><div><p className="eyebrow">ADDRESS / PLATFORM</p><h2>Latest composition</h2></div><span>{cryptoPlatformRows.length}</span></div>
-                  <div className="history-address-list">{cryptoPlatformRows.map((row) => { const delta = row.value - row.start; return <div key={row.platform}><span><strong>{row.platform}</strong><small>{latestCryptoPoint ? ((row.value / latestCryptoPoint.total) * 100).toFixed(1) : '0.0'}% of digital wealth</small></span><b>{formatMoney(row.value)}</b><em className={delta >= 0 ? 'value-positive' : 'value-negative'}>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</em></div> })}</div>
+                  <div className="panel-heading"><div><p className="eyebrow">{selectedCryptoPlatform === 'all' ? 'ADDRESS / PLATFORM' : 'ASSET / NETWORK'}</p><h2>Latest composition</h2></div><span>{formatMoney(cryptoCompositionTotal)}</span></div>
+                  <div className="history-address-list">{cryptoPlatformRows.map((row) => { const delta = row.value - row.start; return <div key={row.platform}><span><strong>{row.platform}</strong><small>{cryptoCompositionTotal ? ((row.value / cryptoCompositionTotal) * 100).toFixed(1) : '0.0'}%{row.quantity == null ? ' of digital wealth' : ` · ${formatAmount(row.quantity)} units`}</small></span><b>{formatMoney(row.value)}</b><em className={delta >= 0 ? 'value-positive' : 'value-negative'}>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</em></div> })}</div>
                 </article>
 
                 <article className="panel history-method-panel">
