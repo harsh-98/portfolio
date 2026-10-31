@@ -430,6 +430,7 @@ function Dashboard({ session }: { session: Session }) {
   const [expandedPanel, setExpandedPanel] = useState<OverviewPanel | null>(null)
   const [spendMonth, setSpendMonth] = useState(new Date().toISOString().slice(0, 7))
   const [selectedCardSources, setSelectedCardSources] = useState(['ether.fi', 'kast', 'ethena'])
+  const [selectedActivityTypes, setSelectedActivityTypes] = useState(['purchase', 'refund', 'cashback'])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -665,6 +666,7 @@ function Dashboard({ session }: { session: Session }) {
   const recentPurchases = selectedCardActivity.filter((transaction) => transaction.transaction_type === 'purchase')
   const recentRefunds = selectedCardActivity.filter((transaction) => transaction.transaction_type === 'refund')
   const recentCashback = selectedCardActivity.filter((transaction) => transaction.transaction_type === 'cashback')
+  const visibleCardActivity = selectedCardActivity.filter((transaction) => selectedActivityTypes.includes(transaction.transaction_type)).sort((a, b) => b.occurred_at.localeCompare(a.occurred_at))
   const recentSpendTotal = recentPurchases.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
   const recentRefundTotal = recentRefunds.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
   const recentCashbackTotal = recentCashback.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
@@ -746,6 +748,10 @@ function Dashboard({ session }: { session: Session }) {
 
   function toggleCardSource(source: string) {
     setSelectedCardSources((current) => current.includes(source) ? current.filter((item) => item !== source) : [...current, source])
+  }
+
+  function toggleActivityType(type: string) {
+    setSelectedActivityTypes((current) => current.includes(type) ? current.filter((item) => item !== type) : [...current, type])
   }
 
   return (
@@ -859,11 +865,21 @@ function Dashboard({ session }: { session: Session }) {
                   <div className="panel-heading"><div><p className="eyebrow">CARD ACCOUNTS</p><h2>Balances &amp; activity</h2></div><div className="panel-heading-actions"><span className="panel-badge">{formatMoney(cardBalanceTotal)}</span><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'spending' ? null : 'spending')} aria-label="Expand card activity">{expandedPanel === 'spending' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className="month-selector"><button onClick={() => shiftSpendMonth(-1)} disabled={spendMonth <= minSpendMonth} aria-label="Previous month"><ChevronLeft size={13} /></button><strong>{selectedMonthLabel}</strong><button onClick={() => shiftSpendMonth(1)} disabled={spendMonth >= maxSpendMonth} aria-label="Next month"><ChevronRight size={13} /></button></div>
                   <div className="source-toggles">{[{ key: 'ether.fi', label: 'Ether.fi' }, { key: 'kast', label: 'KAST' }, { key: 'ethena', label: 'Ethena' }].map((source) => <label key={source.key}><input type="checkbox" checked={selectedCardSources.includes(source.key)} onChange={() => toggleCardSource(source.key)} /><span>{source.label}</span></label>)}</div>
+                  <div className="activity-type-toggles">{[{ key: 'purchase', label: 'Transactions' }, { key: 'refund', label: 'Refunds' }, { key: 'cashback', label: 'Cashback' }].map((type) => <label key={type.key}><input type="checkbox" checked={selectedActivityTypes.includes(type.key)} onChange={() => toggleActivityType(type.key)} /><span>{type.label}</span></label>)}</div>
                   <div className="card-activity-summary"><div><span>Current balance</span><strong>{formatMoneyCents(cardBalanceTotal)}</strong></div><div><span>Cleared spend</span><strong>{formatMoneyCents(recentSpendTotal)}</strong></div><div><span>Refunds</span><strong className="value-positive">+{formatMoneyCents(recentRefundTotal)}</strong></div><div><span>Cashback</span><strong className="value-positive">+{formatMoneyCents(recentCashbackTotal)}</strong></div></div>
                   <div className="spend-section"><div className="spend-section-title"><span>Balances</span><small>{cardBalances.length}</small></div><div className="balance-list">{cardBalances.map((position) => <div key={position.id}><span><strong>{position.asset.symbol}</strong><small>{position.account.name}</small></span><b>{formatMoney(Number(position.value_usd))}</b></div>)}</div></div>
-                  <div className="spend-section activity-section"><div className="spend-section-title"><span>Cleared spending</span><small>{recentPurchases.length}</small></div><div className="recent-spend-list">{recentPurchases.map((transaction) => { const cashback = spendCashback(transaction); const transactionUrl = spendTransactionUrl(transaction); return <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card transaction'}</strong><small><i className="tx-type purchase">Spend</i>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}{transactionUrl && <a href={transactionUrl} target="_blank" rel="noreferrer" aria-label="Open transaction on explorer">Tx <ExternalLink size={8} /></a>}</small>{cashback > 0 && <em className="tx-cashback">+{formatMoneyCents(cashback)} cashback</em>}</span><b>{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div> })}{!recentPurchases.length && <p className="activity-empty">No data for this month.</p>}</div></div>
-                  <div className="spend-section activity-section refund-section"><div className="spend-section-title"><span>Refunds</span><small>{recentRefunds.length}</small></div><div className="recent-spend-list">{recentRefunds.map((transaction) => { const transactionUrl = spendTransactionUrl(transaction); return <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Card refund'}</strong><small><i className="tx-type refund">Refund</i>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}{transactionUrl && <a href={transactionUrl} target="_blank" rel="noreferrer" aria-label="Open transaction on explorer">Tx <ExternalLink size={8} /></a>}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div> })}{!recentRefunds.length && <p className="activity-empty">No data for this month.</p>}</div></div>
-                  <div className="spend-section activity-section cashback-section"><div className="spend-section-title"><span>Cashback</span><small>{recentCashback.length}</small></div><div className="recent-spend-list">{recentCashback.map((transaction) => { const transactionUrl = spendTransactionUrl(transaction); return <div key={transaction.id}><span><strong>{transaction.merchant || transaction.description || 'Cashback'}</strong><small><i className="tx-type cashback">Cashback</i>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}{transactionUrl && <a href={transactionUrl} target="_blank" rel="noreferrer" aria-label="Open transaction on explorer">Tx <ExternalLink size={8} /></a>}</small></span><b className="value-positive">+{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b></div> })}{!recentCashback.length && <p className="activity-empty">No data for this month.</p>}</div></div>
+                  <div className="spend-section activity-section unified-activity"><div className="spend-section-title"><span>Transaction events</span><small>{visibleCardActivity.length}</small></div><div className="recent-spend-list">{visibleCardActivity.map((transaction) => {
+                    const cashback = spendCashback(transaction)
+                    const transactionUrl = spendTransactionUrl(transaction)
+                    const isRefund = transaction.transaction_type === 'refund'
+                    const isCashback = transaction.transaction_type === 'cashback'
+                    const label = isRefund ? 'Refund' : isCashback ? 'Cashback' : 'Tx'
+                    const merchant = transaction.merchant || transaction.description || (isRefund ? 'Card refund' : isCashback ? 'Standalone cashback' : 'Card transaction')
+                    return <div key={transaction.id}>
+                      <span><strong>{merchant}</strong><small><i className={`tx-type ${transaction.transaction_type}`}>{label}</i>{transaction.source} · {new Date(transaction.occurred_at).toLocaleDateString()}{transactionUrl && <a href={transactionUrl} target="_blank" rel="noreferrer" aria-label="Open transaction on explorer">Tx <ExternalLink size={8} /></a>}</small>{!isCashback && cashback > 0 && <em className="tx-cashback">+{formatMoneyCents(cashback)} cashback</em>}</span>
+                      <b className={isRefund || isCashback ? 'value-positive' : 'value-negative'}>{isRefund || isCashback ? '+' : '-'}{formatMoneyCents(Math.abs(Number(transaction.amount_usd)))}</b>
+                    </div>
+                  })}{!visibleCardActivity.length && <p className="activity-empty">No matching events for this month.</p>}</div></div>
                 </aside>
               </div>
             </section>

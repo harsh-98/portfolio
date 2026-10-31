@@ -410,6 +410,9 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .source-toggles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin-bottom: 7px; }
 .source-toggles label { min-width: 0; display: flex; flex-direction: row; align-items: center; gap: 5px; padding: 5px 6px; border: 1px solid #263038; border-radius: 5px; background: #0e1418; color: #849098; font-size: 8px; cursor: pointer; }
 .source-toggles input { width: 11px; height: 11px; margin: 0; padding: 0; accent-color: #4eae80; box-shadow: none; }
+.activity-type-toggles { display: flex; gap: 4px; margin: -2px 0 7px; }
+.activity-type-toggles label { min-width: 0; display: flex; align-items: center; gap: 4px; padding: 3px 6px; border: 1px solid #222c32; border-radius: 999px; color: #748087; font-size: 7px; cursor: pointer; }
+.activity-type-toggles input { width: 10px; height: 10px; margin: 0; accent-color: #4eae80; }
 .card-activity-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-bottom: 7px; }
 .card-activity-summary > div { min-width: 0; display: grid; gap: 2px; padding: 7px; border: 1px solid #20292f; border-radius: 6px; background: #0d1216; }
 .card-activity-summary span { color: #6e7a82; font-size: 7px; text-transform: uppercase; letter-spacing: .04em; }
@@ -424,8 +427,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .balance-list b { color: #e8edef; font-size: 9px; }
 .activity-section { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .activity-section .recent-spend-list { min-height: 0; flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #2a353c transparent; }
-.refund-section { flex: .75; }
-.cashback-section { flex: .75; }
+.unified-activity { flex: 1; }
 .activity-empty { margin: 10px 0; color: #536068; font-size: 7px; text-align: center; }
 .recent-spend-list > div > span > small { display: flex; align-items: center; gap: 4px; }
 .recent-spend-list small a { display: inline-flex; align-items: center; gap: 2px; color: #7ea98f; text-decoration: none; }
