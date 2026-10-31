@@ -5,9 +5,22 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
 
 const args = new Set(process.argv.slice(2));
+if (args.has("--debank-key-stdin")) {
+  const hideInput = process.stdin.isTTY && typeof process.stdin.setRawMode === "function";
+  if (hideInput) process.stdin.setRawMode(true);
+  const lines = createInterface({ input: process.stdin, terminal: false });
+  for await (const line of lines) {
+    process.env.DEBANK_ACCESS_KEY = line.trim();
+    lines.close();
+    break;
+  }
+  if (hideInput) process.stdin.setRawMode(false);
+  if (!process.env.DEBANK_ACCESS_KEY) throw new Error("No DeBank access key received on stdin");
+}
 const dryRun = args.has("--dry-run");
 const debug = args.has("--debug");
 const onlyArg = process.argv.find((arg) => arg.startsWith("--only="));
@@ -196,6 +209,138 @@ async function loadRabby(addresses) {
         value_usd: round(residual),
         source_key: `rabby:${hash(addresses[walletIndex])}:${chainId}:defi`,
         metadata: { wallet_index: walletIndex + 1, chain_id: chainId },
+      });
+    }
+  }
+  return positions;
+}
+
+async function loadDeBank(addresses, accessKey) {
+  if (!accessKey) throw new Error("Missing DEBANK_ACCESS_KEY");
+  const positions = [];
+  const headers = { accept: "application/json", AccessKey: accessKey };
+  const classify = (symbol) => {
+    const normalized = String(symbol).toUpperCase();
+    if (["USDT", "USDC", "DAI", "USDE", "FRAX", "LUSD", "GHO", "USD0", "USDT0"].includes(normalized)) return "stablecoin";
+    if (["XAUT", "XAUT0", "PAXG"].includes(normalized)) return "gold";
+    return "crypto";
+  };
+  const tokenAsset = (token, chain, assetClass) => ({
+    symbol: String(token.optimized_symbol || token.display_symbol || token.symbol || "TOKEN").slice(0, 32).toUpperCase(),
+    name: token.name || token.symbol || "Token",
+    asset_class: assetClass || classify(token.symbol),
+    currency: "USD",
+    network: chain || token.chain || null,
+    contract_address: String(token.id || "native"),
+    metadata: { debank_verified: token.is_verified ?? null, debank_core: token.is_core ?? null, protocol_id: token.protocol_id || null },
+  });
+  for (const address of addresses) {
+    const query = (pathname, params = {}) => fetchJson(`https://pro-openapi.debank.com${pathname}?${new URLSearchParams({ id: address, ...params })}`, { headers });
+    const requests = await Promise.allSettled([
+      query("/v1/user/all_token_list", { is_all: "false" }),
+      query("/v1/user/all_complex_protocol_list"),
+      query("/v1/user/all_nft_list", { is_all: "false" }),
+      query("/v1/user/total_balance"),
+    ]);
+    const endpointNames = ["all_token_list", "all_complex_protocol_list", "all_nft_list", "total_balance"];
+    const failures = requests.flatMap((result, index) => result.status === "rejected"
+      ? [`${endpointNames[index]}: ${String(result.reason?.message || result.reason)}`]
+      : []);
+    if (failures.length) throw new Error(`DeBank request failures: ${failures.join(" | ")}`);
+    const [tokens, protocols, nfts, totals] = requests.map((result) => result.value);
+    const addressHash = hash(address.toLowerCase());
+    const chainValues = new Map();
+    const addChainValue = (chain, value) => chainValues.set(chain, (chainValues.get(chain) || 0) + value);
+    for (const token of tokens ?? []) {
+      // DeBank can include protocol-owned representations alongside direct wallet
+      // balances. Protocol positions are recorded separately below.
+      if (token.is_wallet === false) continue;
+      const value = number(token.amount) * number(token.price);
+      if (value < 0.01) continue;
+      positions.push({
+        account: { name: `Wallet · ${address} · ${token.chain}`, institution: "DeBank", account_type: "wallet", currency: "USD", source: "debank" },
+        asset: tokenAsset(token, token.chain),
+        quantity: number(token.amount),
+        price_usd: number(token.price),
+        value_usd: round(value),
+        source_key: `debank:${addressHash}:${token.chain}:wallet:${hash(String(token.id))}`,
+        metadata: { wallet: `${address.slice(0, 6)}…${address.slice(-4)}`, balance_type: "wallet_token" },
+      });
+      addChainValue(token.chain, value);
+    }
+    for (const protocol of protocols ?? []) {
+      for (let itemIndex = 0; itemIndex < (protocol.portfolio_item_list ?? []).length; itemIndex += 1) {
+        const item = protocol.portfolio_item_list[itemIndex];
+        const account = { name: `Wallet · ${address} · ${protocol.name || protocol.id}`, institution: "DeBank", account_type: "defi", currency: "USD", source: "debank" };
+        let detailedNet = 0;
+        for (const token of item.asset_token_list ?? []) {
+          const value = number(token.amount) * number(token.price);
+          if (value < 0.01) continue;
+          positions.push({
+            account,
+            asset: tokenAsset(token, protocol.chain),
+            quantity: number(token.amount),
+            price_usd: number(token.price),
+            value_usd: round(value),
+            source_key: `debank:${addressHash}:${protocol.chain}:protocol:${hash(`${protocol.id}:${itemIndex}:${token.id}:asset`)}`,
+            metadata: { protocol_id: protocol.id, protocol_name: protocol.name, portfolio_type: item.name, balance_type: "protocol_asset" },
+          });
+          detailedNet += value;
+        }
+        for (const token of item.detail?.borrow_token_list ?? []) {
+          const value = number(token.amount) * number(token.price);
+          if (value < 0.01) continue;
+          positions.push({
+            account,
+            asset: { ...tokenAsset(token, protocol.chain, "liability"), symbol: `${String(token.symbol || "TOKEN").toUpperCase()}-DEBT`.slice(0, 32), name: `${token.name || token.symbol} debt` },
+            quantity: -number(token.amount),
+            price_usd: number(token.price),
+            value_usd: round(-value),
+            source_key: `debank:${addressHash}:${protocol.chain}:protocol:${hash(`${protocol.id}:${itemIndex}:${token.id}:debt`)}`,
+            metadata: { protocol_id: protocol.id, protocol_name: protocol.name, portfolio_type: item.name, balance_type: "protocol_debt" },
+          });
+          detailedNet -= value;
+        }
+        const authoritativeNet = number(item.stats?.net_usd_value);
+        const residual = authoritativeNet - detailedNet;
+        if (Math.abs(residual) >= 0.01) positions.push({
+          account,
+          asset: { symbol: `${residual < 0 ? "DEBT" : "DEFI"}-${hash(protocol.id).slice(0, 8)}`.toUpperCase(), name: `${protocol.name || protocol.id} unallocated net position`, asset_class: residual < 0 ? "liability" : "crypto", currency: "USD", network: protocol.chain, contract_address: null, metadata: { protocol_id: protocol.id } },
+          quantity: residual,
+          price_usd: 1,
+          value_usd: round(residual),
+          source_key: `debank:${addressHash}:${protocol.chain}:protocol:${hash(`${protocol.id}:${itemIndex}:residual`)}`,
+          metadata: { protocol_id: protocol.id, protocol_name: protocol.name, portfolio_type: item.name, balance_type: "protocol_residual" },
+        });
+        addChainValue(protocol.chain, authoritativeNet);
+      }
+    }
+    for (const chain of totals.chain_list ?? []) {
+      const residual = number(chain.usd_value) - (chainValues.get(chain.id) || 0);
+      if (residual < 0.01) continue;
+      positions.push({
+        account: { name: `Wallet · ${address} · ${chain.name || chain.id}`, institution: "DeBank", account_type: "wallet", currency: "USD", source: "debank" },
+        asset: { symbol: `OTHER-${String(chain.id).toUpperCase()}`.slice(0, 32), name: `${chain.name || chain.id} unallocated wallet value`, asset_class: "crypto", currency: "USD", network: chain.id, contract_address: null, metadata: { valuation: "DeBank chain total less enumerated wallet and protocol positions" } },
+        quantity: residual,
+        price_usd: 1,
+        value_usd: round(residual),
+        source_key: `debank:${addressHash}:${chain.id}:residual`,
+        metadata: { wallet: `${address.slice(0, 6)}…${address.slice(-4)}`, balance_type: "chain_residual" },
+      });
+    }
+    for (const nft of nfts ?? []) {
+      const quantity = number(nft.amount) || 1;
+      const price = number(nft.usd_price);
+      const value = quantity * price;
+      if (value < 0.01) continue;
+      positions.push({
+        account: { name: `Wallet · ${address} · ${nft.chain}`, institution: "DeBank", account_type: "wallet", currency: "USD", source: "debank" },
+        asset: { symbol: `NFT-${hash(`${nft.chain}:${nft.contract_id}:${nft.inner_id}`)}`.toUpperCase(), name: nft.name || `${nft.contract_name || "NFT"} #${nft.inner_id}`, asset_class: "nft", currency: "USD", network: nft.chain, contract_address: nft.contract_id, metadata: { collection_id: nft.collection_id || null, token_id: nft.inner_id } },
+        quantity,
+        price_usd: price,
+        value_usd: round(value),
+        source_key: `debank:${addressHash}:${nft.chain}:nft:${hash(String(nft.id))}`,
+        metadata: { wallet: `${address.slice(0, 6)}…${address.slice(-4)}`, balance_type: "nft", detail_url: nft.detail_url || null },
       });
     }
   }
@@ -662,7 +807,7 @@ function summarizeSpend(transactions) {
   return { records: transactions.length, by_type: byType, months: [...months].sort() };
 }
 
-const portfolioSources = ["rabby", "hyperliquid", "binance", "wio", "wio-stocks", "xtb"];
+const portfolioSources = ["rabby", "debank", "hyperliquid", "binance", "wio", "wio-stocks", "xtb"];
 const needsPortfolioSync = !only || portfolioSources.some((source) => only.has(source));
 const fx = needsPortfolioSync ? await loadFx() : {};
 const sourcePositions = {};
@@ -680,6 +825,10 @@ async function captureSource(source, loader) {
 if (shouldRun("rabby")) {
   const result = await captureSource("rabby", () => loadRabby(required("PORTFOLIO_EVM_ADDRESSES").split(",").map((value) => value.trim()).filter(Boolean)));
   if (result) sourcePositions.rabby = result;
+}
+if (shouldRun("debank")) {
+  const result = await captureSource("debank", () => loadDeBank(required("PORTFOLIO_EVM_ADDRESSES").split(",").map((value) => value.trim()).filter(Boolean), process.env.DEBANK_ACCESS_KEY?.trim() || serverCredentials.DEBANK_ACCESS_KEY?.trim()));
+  if (result) sourcePositions.debank = result;
 }
 if (shouldRun("hyperliquid")) {
   const addressList = process.env.PORTFOLIO_HYPERLIQUID_ADDRESSES?.trim() || serverCredentials.PORTFOLIO_HYPERLIQUID_ADDRESSES?.trim() || required("PORTFOLIO_EVM_ADDRESSES");
@@ -802,6 +951,13 @@ async function replaceSource(source, positions) {
 }
 
 for (const [source, positions] of Object.entries(sourcePositions)) await replaceSource(source, positions);
+
+if (sourcePositions.debank) {
+  const staleRabbyQuery = new URLSearchParams({ owner_id: `eq.${ownerId}`, source_key: "like.rabby:%", select: "id" });
+  for (const stale of await supabase(`/rest/v1/positions?${staleRabbyQuery}`)) {
+    await supabase(`/rest/v1/positions?id=eq.${stale.id}`, { method: "DELETE" });
+  }
+}
 
 if (sourcePositions["wio-stocks"]) {
   await supabase(`/rest/v1/positions?owner_id=eq.${ownerId}&source_key=eq.manual:wio:equity`, { method: "DELETE" });
