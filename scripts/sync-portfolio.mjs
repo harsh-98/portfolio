@@ -221,7 +221,7 @@ async function loadDeBank(addresses, accessKey) {
   const headers = { accept: "application/json", AccessKey: accessKey };
   const classify = (symbol) => {
     const normalized = String(symbol).toUpperCase();
-    if (["USDT", "USDC", "DAI", "USDE", "FRAX", "LUSD", "GHO", "USD0", "USDT0"].includes(normalized)) return "stablecoin";
+    if (["USDT", "USDC", "RUSDC", "DAI", "USDE", "FRAX", "LUSD", "GHO", "USD0", "USDT0"].includes(normalized)) return "stablecoin";
     if (["XAUT", "XAUT0", "PAXG"].includes(normalized)) return "gold";
     return "crypto";
   };
@@ -384,7 +384,9 @@ async function loadOneInch(addresses, apiKey) {
       const value = rawValue < 0 ? rawValue : rawValue * sign;
       const underlying = Array.isArray(row.underlying_tokens) ? row.underlying_tokens.filter(Boolean) : [];
       const detail = underlying.length === 1 ? underlying[0] : {};
-      const symbol = String(row.contract_symbol || detail.symbol || (kind === "protocol" ? "DEFI" : "TOKEN")).slice(0, 32).toUpperCase();
+      const contractAddress = String(row.contract_address || detail.contract_address || detail.address || "native");
+      const isResolvUsdc = contractAddress.toLowerCase() === "0xf0795c47fa58d00f5f77f4d5c01f31ee891e21b4";
+      const symbol = isResolvUsdc ? "RUSDC" : String(row.contract_symbol || detail.symbol || (kind === "protocol" ? "DEFI" : "TOKEN")).slice(0, 32).toUpperCase();
       const responseAddress = String(row.address || "");
       const address = /^0x0{40}$/i.test(responseAddress) || !responseAddress ? requestedAddress : responseAddress;
       const chainId = number(row.chain_id ?? row.chain);
@@ -402,11 +404,11 @@ async function loadOneInch(addresses, apiKey) {
         },
         asset: {
           symbol: sign < 0 ? `${symbol}-DEBT`.slice(0, 32) : symbol,
-          name: row.contract_name || detail.name || (kind === "protocol" ? `${protocolName} position` : symbol),
+          name: isResolvUsdc ? "Resolv USDC" : row.contract_name || detail.name || (kind === "protocol" ? `${protocolName} position` : symbol),
           asset_class: sign < 0 ? "liability" : classify(symbol),
           currency: "USD",
           network,
-          contract_address: row.contract_address || detail.contract_address || detail.address || null,
+          contract_address: contractAddress === "native" ? null : contractAddress,
           metadata: { chain_id: chainId, protocol_id: row.protocol_group_id || null, protocol_type: row.protocol_type || null },
         },
         quantity: amount ? amount * sign : sign,
@@ -416,7 +418,7 @@ async function loadOneInch(addresses, apiKey) {
         metadata: {
           wallet_address: address.toLowerCase(),
           chain_id: chainId,
-          contract_address: String(row.contract_address || detail.contract_address || detail.address || "native").toLowerCase(),
+          contract_address: contractAddress.toLowerCase(),
           wallet: address === "unknown" ? null : `${address.slice(0, 6)}…${address.slice(-4)}`,
           balance_type: kind === "protocol" ? "protocol_position" : "wallet_token",
           protocol_id: row.protocol_group_id || null,
@@ -436,7 +438,7 @@ async function loadWatchedTokens(addresses, watchConfig) {
   const tokens = JSON.parse(watchConfig);
   if (!Array.isArray(tokens)) throw new Error("PORTFOLIO_WATCH_TOKENS_JSON must be a JSON array");
   const positions = [];
-  const stablecoins = new Set(["USDT", "USDC", "DAI", "USDE", "FRAX", "LUSD", "GHO", "USD0", "USDT0"]);
+  const stablecoins = new Set(["USDT", "USDC", "RUSDC", "DAI", "USDE", "FRAX", "LUSD", "GHO", "USD0", "USDT0"]);
   const goldTokens = new Set(["XAUT", "XAUT0", "PAXG"]);
   for (const token of tokens) {
     const contract = String(token.contract_address).toLowerCase();
