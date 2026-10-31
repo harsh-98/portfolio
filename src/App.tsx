@@ -2,6 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
+import { Area, AreaChart, Brush, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import {
   Activity,
   AlertTriangle,
@@ -94,6 +95,16 @@ const classMeta: Record<AssetClass, { label: string; color: string }> = {
 
 type View = 'overview' | 'crypto' | 'losses' | 'holdings' | 'activity'
 type OverviewPanel = 'platforms' | 'allocation' | 'digital' | 'equities' | 'spending'
+type DisplayCurrency = 'USD' | 'INR'
+type CryptoRange = '3M' | '6M' | '1Y' | '3Y' | 'ALL'
+
+const cryptoRanges: CryptoRange[] = ['3M', '6M', '1Y', '3Y', 'ALL']
+const cryptoRangeDays: Record<Exclude<CryptoRange, 'ALL'>, number> = { '3M': 92, '6M': 183, '1Y': 365, '3Y': 1096 }
+
+function sampleEvenly<T>(values: T[], maximum: number) {
+  if (values.length <= maximum) return values
+  return Array.from({ length: maximum }, (_, index) => values[Math.round((index * (values.length - 1)) / (maximum - 1))])
+}
 
 const money = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -452,6 +463,33 @@ function Dashboard({ session }: { session: Session }) {
   const [spendMonth, setSpendMonth] = useState(new Date().toISOString().slice(0, 7))
   const [selectedCardSources, setSelectedCardSources] = useState(['ether.fi', 'kast', 'ethena'])
   const [selectedActivityTypes, setSelectedActivityTypes] = useState(['purchase', 'refund', 'cashback'])
+  const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>(() => localStorage.getItem('northstar-currency') === 'INR' ? 'INR' : 'USD')
+  const [cryptoRange, setCryptoRange] = useState<CryptoRange>('1Y')
+  const [selectedCryptoPlatform, setSelectedCryptoPlatform] = useState('all')
+  const inrPerUsd = useMemo(() => {
+    const indiaPosition = positions.find((position) => position.source_key === 'india:inr')
+    const quantity = Number(indiaPosition?.quantity || 0)
+    const value = Number(indiaPosition?.value_usd || 0)
+    return quantity > 0 && value > 0 ? quantity / value : 95.13
+  }, [positions])
+  const currencyFormatter = useMemo(() => new Intl.NumberFormat(displayCurrency === 'INR' ? 'en-IN' : 'en-US', {
+    style: 'currency',
+    currency: displayCurrency,
+    maximumFractionDigits: 0,
+  }), [displayCurrency])
+  const currencyFormatterCents = useMemo(() => new Intl.NumberFormat(displayCurrency === 'INR' ? 'en-IN' : 'en-US', {
+    style: 'currency',
+    currency: displayCurrency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }), [displayCurrency])
+  const displayRate = displayCurrency === 'INR' ? inrPerUsd : 1
+  const compactCurrencyFormatter = useMemo(() => new Intl.NumberFormat(displayCurrency === 'INR' ? 'en-IN' : 'en-US', { style: 'currency', currency: displayCurrency, notation: 'compact', maximumFractionDigits: 1 }), [displayCurrency])
+  const formatMoney = useCallback((value: number) => currencyFormatter.format((Number.isFinite(value) ? value : 0) * displayRate), [currencyFormatter, displayRate])
+  const formatMoneyCents = useCallback((value: number) => currencyFormatterCents.format((Number.isFinite(value) ? value : 0) * displayRate), [currencyFormatterCents, displayRate])
+  const formatCompactMoney = useCallback((value: number) => compactCurrencyFormatter.format((Number.isFinite(value) ? value : 0) * displayRate), [compactCurrencyFormatter, displayRate])
+
+  useEffect(() => { localStorage.setItem('northstar-currency', displayCurrency) }, [displayCurrency])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -600,7 +638,7 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'pnl', headerName: 'Unrealized', minWidth: 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'realizedPnl', headerName: 'Realized', minWidth: 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'allocation', headerName: 'Alloc.', minWidth: 50, flex: .6, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
-  ], [])
+  ], [formatMoney, formatMoneyCents])
   const brokerageByAsset = useMemo(() => {
     const grouped = new Map<string, BrokerageTransaction[]>()
     brokerageTransactions.forEach((transaction) => {
@@ -645,7 +683,7 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'price', headerName: 'Price', minWidth: 100, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
     { field: 'amount', headerName: 'Amount', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoney(Number(value)) },
     { field: 'realizedPnl', headerName: 'Realized P/L', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
-  ], [])
+  ], [formatMoney, formatMoneyCents])
   const cryptoHistory = useMemo(() => {
     const grouped = new Map<string, { date: string; total: number; platforms: Map<string, number> }>()
     positionSnapshots.forEach((snapshot) => {
@@ -659,22 +697,30 @@ function Dashboard({ session }: { session: Session }) {
     })
     return [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date))
   }, [positionSnapshots])
+  const cryptoPlatforms = useMemo(() => [...new Set(cryptoHistory.flatMap((point) => [...point.platforms.keys()]))].sort(), [cryptoHistory])
+  const selectedCryptoHistory = useMemo(() => cryptoHistory.map((point) => ({
+    ...point,
+    total: selectedCryptoPlatform === 'all' ? point.total : point.platforms.get(selectedCryptoPlatform) || 0,
+  })), [cryptoHistory, selectedCryptoPlatform])
+  const rangedCryptoHistory = useMemo(() => {
+    if (cryptoRange === 'ALL' || !selectedCryptoHistory.length) return selectedCryptoHistory
+    const latest = new Date(`${selectedCryptoHistory[selectedCryptoHistory.length - 1].date}T00:00:00Z`)
+    latest.setUTCDate(latest.getUTCDate() - cryptoRangeDays[cryptoRange])
+    const cutoff = latest.toISOString().slice(0, 10)
+    return selectedCryptoHistory.filter((point) => point.date >= cutoff)
+  }, [selectedCryptoHistory, cryptoRange])
+  const chartCryptoHistory = useMemo(() => sampleEvenly(rangedCryptoHistory, 52), [rangedCryptoHistory])
+  const cryptoChartData = useMemo(() => chartCryptoHistory.map((point) => ({ date: point.date, value: point.total })), [chartCryptoHistory])
   const currentDigitalValue = positions.filter((position) => isDigitalAsset(position.asset)).reduce((sum, position) => sum + Number(position.value_usd), 0)
   const firstCryptoPoint = cryptoHistory[0]
   const latestCryptoPoint = cryptoHistory[cryptoHistory.length - 1]
+  const firstRangeCryptoPoint = rangedCryptoHistory[0]
+  const latestRangeCryptoPoint = rangedCryptoHistory[rangedCryptoHistory.length - 1]
   const priorCryptoPoint = cryptoHistory[cryptoHistory.length - 2]
   const cryptoWeeklyChange = latestCryptoPoint && priorCryptoPoint ? latestCryptoPoint.total - priorCryptoPoint.total : 0
   const cryptoSinceStart = latestCryptoPoint && firstCryptoPoint ? latestCryptoPoint.total - firstCryptoPoint.total : 0
-  const cryptoChartMin = cryptoHistory.length ? Math.min(...cryptoHistory.map((point) => point.total)) : 0
-  const cryptoChartMax = cryptoHistory.length ? Math.max(...cryptoHistory.map((point) => point.total)) : 0
-  const cryptoChartPoints = cryptoHistory.map((point, index) => {
-    const x = cryptoHistory.length === 1 ? 500 : (index / (cryptoHistory.length - 1)) * 1000
-    const range = cryptoChartMax - cryptoChartMin || 1
-    const y = 270 - ((point.total - cryptoChartMin) / range) * 230
-    return `${x},${y}`
-  }).join(' ')
   const cryptoPlatformRows = latestCryptoPoint
-    ? [...latestCryptoPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, start: firstCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
+    ? [...latestCryptoPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, start: firstRangeCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
     : []
   const realizedXtb = brokerageTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
   const cardBalances = positions.filter((position) => { const source = cardSourceForPosition(position); return source && selectedCardSources.includes(source) }).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
@@ -730,7 +776,7 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'value', headerName: 'Value', minWidth: 115, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
     { field: 'pnl', headerName: 'P/L', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'weight', headerName: 'Weight', minWidth: 100, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(2)}%` },
-  ], [])
+  ], [formatMoney, formatMoneyCents])
   const lossTotalLow = lossEvents.reduce((sum, event) => sum + Number(event.loss_low_usd || 0), 0)
   const lossTotalHigh = lossEvents.reduce((sum, event) => sum + Number(event.loss_high_usd || event.loss_low_usd || 0), 0)
   const realizedLoss = lossEvents.filter((event) => event.status === 'realized').reduce((sum, event) => sum + Number(event.loss_low_usd || 0), 0)
@@ -742,7 +788,7 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'status', headerName: 'Status', minWidth: 110, filter: 'agTextColumnFilter', cellClass: ({ value }) => `loss-status-${value}` },
     { field: 'loss_low_usd', headerName: 'Estimated loss', minWidth: 155, filter: 'agNumberColumnFilter', valueFormatter: ({ data }) => { if (!data || data.loss_low_usd == null) return 'Pending'; const low = Number(data.loss_low_usd); const high = Number(data.loss_high_usd ?? low); return low === high ? `-${formatMoney(low)}` : `-${formatMoney(low)} to -${formatMoney(high)}` }, cellClass: 'grid-pnl-negative' },
     { field: 'details', headerName: 'Reconciliation details', minWidth: 360, flex: 2, filter: 'agTextColumnFilter', wrapText: true, autoHeight: true },
-  ], [])
+  ], [formatMoney])
 
   const navItems: Array<{ id: View; label: string; icon: typeof BarChart3 }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
@@ -797,7 +843,7 @@ function Dashboard({ session }: { session: Session }) {
         <header className="topbar">
           <div className="topbar-left"><button className="menu-button" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={21} /></button><button className="topbar-brand" onClick={() => chooseView('overview')}><Sparkles size={16} />Northstar</button></div>
           <div className="workspace-status"><span className="status-dot" />Private shared workspace</div>
-          <div className="profile-wrap"><button className="profile-button" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen}><span>{session.user.email?.slice(0, 1).toUpperCase()}</span><ChevronDown size={15} /></button>{profileOpen && <div className="profile-menu"><strong>{session.user.email}</strong><small>Approved portfolio access</small><button onClick={() => supabase.auth.signOut()}><LogOut size={15} />Sign out</button></div>}</div>
+          <div className="topbar-actions"><div className="notional-toggle" aria-label="Display notional currency"><span>Notional</span>{(['USD', 'INR'] as DisplayCurrency[]).map((currency) => <button key={currency} className={displayCurrency === currency ? 'active' : ''} onClick={() => setDisplayCurrency(currency)}>{currency}</button>)}</div><div className="profile-wrap"><button className="profile-button" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen}><span>{session.user.email?.slice(0, 1).toUpperCase()}</span><ChevronDown size={15} /></button>{profileOpen && <div className="profile-menu"><strong>{session.user.email}</strong><small>Approved portfolio access</small><button onClick={() => supabase.auth.signOut()}><LogOut size={15} />Sign out</button></div>}</div></div>
         </header>
 
         <div className={`page-content ${view === 'overview' ? 'overview-page' : ''}`}>
@@ -917,8 +963,8 @@ function Dashboard({ session }: { session: Session }) {
 
               <div className="history-grid">
                 <article className="panel history-chart-panel">
-                  <div className="panel-heading"><div><p className="eyebrow">WEEKLY ADDRESS SNAPSHOTS</p><h2>Crypto wealth over time</h2></div><span>{latestCryptoPoint ? formatMoney(latestCryptoPoint.total) : 'Pending'}</span></div>
-                  {cryptoHistory.length ? <div className="history-chart"><div className="chart-scale"><span>{formatMoney(cryptoChartMax)}</span><span>{formatMoney(cryptoChartMin)}</span></div><svg viewBox="0 0 1000 300" preserveAspectRatio="none" role="img" aria-label="Weekly crypto wealth chart"><defs><linearGradient id="cryptoArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#68d3a0" stopOpacity=".32" /><stop offset="1" stopColor="#68d3a0" stopOpacity="0" /></linearGradient></defs><path d={`M ${cryptoChartPoints.replaceAll(' ', ' L ')} L 1000,300 L 0,300 Z`} fill="url(#cryptoArea)" /><polyline points={cryptoChartPoints} fill="none" stroke="#68d3a0" strokeWidth="4" vectorEffect="non-scaling-stroke" />{cryptoHistory.map((point, index) => { const [x, y] = cryptoChartPoints.split(' ')[index].split(','); return <circle key={point.date} cx={x} cy={y} r="5" fill="#0d1216" stroke="#68d3a0"><title>{point.date}: {formatMoney(point.total)}</title></circle> })}</svg><div className="chart-dates"><span>{firstCryptoPoint?.date}</span><span>{latestCryptoPoint?.date}</span></div></div> : <div className="history-empty"><Coins size={24} /><strong>Historical backfill not loaded yet</strong><p>The first observed snapshot is available after a successful sync. Reconstructed weekly history from 2018 requires an indexed historical-balance API.</p></div>}
+                  <div className="panel-heading"><div><p className="eyebrow">WEEKLY ADDRESS SNAPSHOTS</p><h2>Crypto wealth over time</h2></div><div className="history-chart-actions"><span>{latestRangeCryptoPoint ? `${formatMoney(latestRangeCryptoPoint.total)} · ${chartCryptoHistory.length} points` : 'Pending'}</span><div className="history-filter-row"><label>Address / platform<select value={selectedCryptoPlatform} onChange={(event) => setSelectedCryptoPlatform(event.target.value)}><option value="all">All addresses / platforms</option>{cryptoPlatforms.map((platform) => <option key={platform} value={platform}>{platform}</option>)}</select></label><div className="range-toggle" aria-label="Crypto chart range">{cryptoRanges.map((range) => <button key={range} className={cryptoRange === range ? 'active' : ''} onClick={() => setCryptoRange(range)}>{range}</button>)}</div></div></div></div>
+                  {chartCryptoHistory.length ? <div className="history-chart"><div className="history-chart-scroll"><div className="history-chart-canvas"><ResponsiveContainer width="100%" height="100%"><AreaChart data={cryptoChartData} margin={{ top: 8, right: 12, left: 8, bottom: 4 }}><defs><linearGradient id="cryptoArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#68d3a0" stopOpacity={0.32} /><stop offset="1" stopColor="#68d3a0" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="#1e252b" vertical={false} /><XAxis dataKey="date" minTickGap={42} tick={{ fill: '#5d6971', fontSize: 8 }} tickLine={false} axisLine={false} /><YAxis width={58} domain={['auto', 'auto']} tickFormatter={(value) => formatCompactMoney(Number(value))} tick={{ fill: '#5d6971', fontSize: 8 }} tickLine={false} axisLine={false} /><Tooltip formatter={(value) => [formatMoney(Number(value)), 'Wealth']} contentStyle={{ background: '#11171c', border: '1px solid #2a333a', borderRadius: 7, fontSize: 10 }} labelStyle={{ color: '#8d999f' }} /><Area type="monotone" dataKey="value" stroke="#68d3a0" strokeWidth={2} fill="url(#cryptoArea)" dot={false} activeDot={{ r: 4, fill: '#0d1216', stroke: '#68d3a0' }} /><Brush dataKey="date" height={24} travellerWidth={8} stroke="#315b47" fill="#0d1216" tickFormatter={(date) => String(date).slice(0, 7)} /></AreaChart></ResponsiveContainer></div></div></div> : <div className="history-empty"><Coins size={24} /><strong>Historical backfill not loaded yet</strong><p>The first observed snapshot is available after a successful sync. Reconstructed weekly history from 2018 requires an indexed historical-balance API.</p></div>}
                 </article>
 
                 <article className="panel history-address-panel">
