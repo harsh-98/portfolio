@@ -718,6 +718,17 @@ function Dashboard({ session }: { session: Session }) {
     })
     return [...grouped.values()].filter((item) => item.value >= 100).sort((a, b) => b.value - a.value)
   }, [positions])
+  const digitalPnl = useMemo(() => {
+    const shownSymbols = new Set(cryptoExposure.map((asset) => asset.symbol))
+    const digitalPositions = positions.filter((position) => ['crypto', 'stablecoin'].includes(effectiveAssetClass(position.asset)) && shownSymbols.has(canonicalCryptoSymbol(position.asset.symbol)))
+    const knownCostPositions = digitalPositions.filter((position) => position.cost_basis_usd != null)
+    return {
+      value: knownCostPositions.length
+        ? knownCostPositions.reduce((sum, position) => sum + Number(position.value_usd) - Number(position.cost_basis_usd), 0)
+        : null,
+      hasMissingCost: knownCostPositions.length < digitalPositions.length,
+    }
+  }, [positions, cryptoExposure])
   const equityExposure = useMemo(() => {
     const grouped = new Map<string, { symbol: string; name: string; value: number; quantity: number; costBasis: number; pricedCost: number; pricedValue: number; pricedQuantity: number; breakdown: Map<string, { value: number; quantity: number; costBasis: number }> }>()
     equityPositions.forEach((position) => {
@@ -1021,7 +1032,7 @@ function Dashboard({ session }: { session: Session }) {
                 </article>
 
                 <article className={overviewPanelClass('digital', 'overview-digital')}>
-                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>Digital assets</h2></div><div className="panel-heading-actions"><span className="panel-badge">{cryptoExposure.length} assets</span><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>Digital assets</h2></div><div className="panel-heading-actions"><div className="pnl-summary"><small>Total P/L</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className="asset-rows digital-rows">{cryptoExposure.map((asset) => {
                     const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
                     const open = expandedDigital === asset.symbol
@@ -1032,6 +1043,7 @@ function Dashboard({ session }: { session: Session }) {
                       {open && <div className="asset-breakdown digital-breakdown">{details.map(([name, detail]) => { const detailPnl = detail.pricedValue - detail.costBasis; const detailHasCost = detail.pricedQuantity > 0; return <div key={name}><span>{name}</span><strong>{formatAmount(detail.quantity)}</strong><small>{detailHasCost ? `Avg ${formatMoney(detail.costBasis / detail.pricedQuantity)}` : 'Average cost pending'}</small><b>{formatMoney(detail.value)}</b><em className={detailHasCost ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detailHasCost ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}</em></div> })}</div>}
                     </div>
                   })}</div>
+                  <div className="equity-footer"><span>{cryptoExposure.length} assets shown</span><span>{digitalPnl.hasMissingCost ? 'Unrealized · known costs only' : 'Unrealized P/L'}</span></div>
                 </article>
 
                 <article className={overviewPanelClass('equities', 'overview-equities')}>
