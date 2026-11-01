@@ -836,6 +836,13 @@ function Dashboard({ session }: { session: Session }) {
       'avax-mainnet': 'avalanche', avax: 'avalanche', '43114': 'avalanche',
       'zksync-mainnet': 'zksync', '324': 'zksync',
     }
+    const walletHash = (snapshot: PositionSnapshot) => String(snapshot.metadata?.wallet_hash || snapshot.source_key.match(/^(?:backfill|oneinch|rabby|debank|history:oneinch):([a-f0-9]{12}):/i)?.[1] || '')
+    const walletLabels = new Map<string, string>()
+    positionSnapshots.forEach((snapshot) => {
+      const address = snapshot.account && shortAddress(snapshot.account.name)
+      const hash = walletHash(snapshot)
+      if (address && hash) walletLabels.set(hash, address)
+    })
     const publishedBatches = new Set(positionSnapshots
       .filter((snapshot) => snapshot.metadata?.coverage_only && snapshot.metadata?.history_batch)
       .map((snapshot) => `${snapshot.metadata?.history_batch}|${snapshot.metadata?.chain_id}`))
@@ -843,10 +850,10 @@ function Dashboard({ session }: { session: Session }) {
     positionSnapshots.forEach((snapshot) => {
       if (snapshot.metadata?.history_batch && !publishedBatches.has(`${snapshot.metadata.history_batch}|${snapshot.metadata.chain_id}`)) return
       if (!snapshot.asset || !snapshot.account) return
-      if (!isDigitalAsset(snapshot.asset) && !(snapshot.asset.asset_class === 'liability' && snapshot.metadata?.wallet_hash)) return
+      if (!isDigitalAsset(snapshot.asset) && !(snapshot.asset.asset_class === 'liability' && walletHash(snapshot))) return
       const wallet = String(snapshot.metadata?.wallet_hash || snapshot.account.name.match(/0x[0-9a-f]{40}/i)?.[0]?.toLowerCase() || platformIdentity(snapshot.account, snapshot.source_key))
       // Source hashes let legacy and newer providers use the same wallet identity.
-      const legacyHash = snapshot.source_key.match(/^(?:backfill|oneinch|history:oneinch):([a-f0-9]{12}):/i)?.[1]
+      const legacyHash = walletHash(snapshot)
       const networkName = String(snapshot.metadata?.chain_id || snapshot.asset.network || 'unknown').toLowerCase()
       const network = networkAliases[networkName] || networkName
       const key = `${cryptoWeekBucket(snapshot.snapshot_date)}|${legacyHash || wallet}|${network}`
@@ -863,7 +870,7 @@ function Dashboard({ session }: { session: Session }) {
       const week = cryptoWeekBucket(snapshot.snapshot_date)
       const current = grouped.get(week) || { date: week, total: 0, platforms: new Map<string, number>(), assets: new Map<string, Map<string, AssetBalance>>() }
       const value = Number(snapshot.value_usd)
-      const platform = platformIdentity(snapshot.account, snapshot.source_key)
+      const platform = walletLabels.get(walletHash(snapshot)) || platformIdentity(snapshot.account, snapshot.source_key)
       const network = snapshot.asset.network ? ` · ${snapshot.asset.network}` : ''
       const assetKey = `${snapshot.asset.symbol}${network}`
       const platformAssets = current.assets.get(platform) || new Map<string, AssetBalance>()
@@ -1165,7 +1172,7 @@ function Dashboard({ session }: { session: Session }) {
                 <article className="panel history-method-panel">
                   <div><p className="eyebrow">VALUATION METHOD</p><h2>Observed vs reconstructed</h2></div>
                   <p><strong>Observed</strong> snapshots use the balances and USD prices returned during each weekly sync. They are the source of truth going forward.</p>
-                  <p><strong>Reconstructed</strong> history uses historical balances at each weekly block plus that asset’s USD price on the same date. Token and supported DeFi positions are combined across wallets and networks in Tuesday-to-Monday buckets. Each wallet/network contributes one observation per week. Unsupported networks and protocols can leave gaps; historical values are never inferred from today’s balance.</p>
+                  <p><strong>Reconstructed</strong> history uses historical balances at each weekly block plus that asset’s USD price on the same date. Token and supported DeFi positions are combined across wallets and networks in Tuesday-to-Monday buckets. Each wallet/network contributes one observation per week. Older legacy weeks and unsupported protocols can remain partial. Reconstruction covers configured EVM wallets; Binance and Hyperliquid history starts with recorded syncs.</p>
                   <span>The complete wallet backfill includes token and DeFi positions from $0.01; the dashboard’s $100 display filter does not apply to this chart.</span>
                 </article>
               </div>

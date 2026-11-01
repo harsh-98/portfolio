@@ -47,8 +47,11 @@ async function request(url, headers, method = 'GET', body) {
     await pause(Math.max(1000 * 2 ** attempt, Number(response.headers.get('retry-after') || 0) * 1000))
   }
 }
+let nextProviderRequest = 0
 async function provider(path, params = {}) {
-  await pause(1100)
+  const start = Math.max(Date.now(), nextProviderRequest)
+  nextProviderRequest = start + 1100
+  await pause(Math.max(0, start - Date.now()))
   const response = await request(`https://api.1inch.com/portfolio/portfolio/v5.0${path}?${new URLSearchParams(params)}`, { Authorization: `Bearer ${apiKey}`, accept: 'application/json' })
   return response.result ?? response
 }
@@ -74,19 +77,19 @@ async function account(address, chain) {
 }
 async function asset(chain, symbol, name, contract, assetClass) {
   const key = `${chain.chain_id}|${symbol}|${contract}|${assetClass}`
-  if (assetCache.has(key)) return assetCache.get(key)
-  const candidates = await db('assets', { owner_id: `eq.${ownerId}`, symbol: `eq.${symbol}`, select: 'id,network,contract_address,asset_class' })
-  const existing = candidates.find((item) => item.network === chain.chain_name && (item.contract_address || null) === contract && item.asset_class === assetClass)
-  const id = existing?.id || (await db('assets', {}, 'POST', { owner_id: ownerId, symbol, name, network: chain.chain_name, contract_address: contract, asset_class: assetClass, currency: 'USD', metadata: { provider: '1inch History', chain_id: chain.chain_id } }))[0].id
-  assetCache.set(key, id)
-  return id
+  if (!assetCache.has(key)) assetCache.set(key, (async () => {
+    const candidates = await db('assets', { owner_id: `eq.${ownerId}`, symbol: `eq.${symbol}`, select: 'id,network,contract_address,asset_class' })
+    const existing = candidates.find((item) => item.network === chain.chain_name && (item.contract_address || null) === contract)
+    return existing?.id || (await db('assets', {}, 'POST', { owner_id: ownerId, symbol, name, network: chain.chain_name, contract_address: contract, asset_class: assetClass, currency: 'USD', metadata: { provider: '1inch History', chain_id: chain.chain_id } }))[0].id
+  })())
+  try { return await assetCache.get(key) } catch (error) { assetCache.delete(key); throw error }
 }
 const checkpointChain = 'oneinch-allchains-v1'
 let failed = 0
-for (const date of dates) for (const [index, address] of addresses.entries()) {
+async function capture(date, address, index) {
   const walletHash = hash(address)
   const checkpoint = { owner_id: `eq.${ownerId}`, wallet_hash: `eq.${walletHash}`, chain_name: `eq.${checkpointChain}`, snapshot_date: `eq.${date}` }
-  if (!dryRun && !force && (await db('crypto_backfill_checkpoints', { ...checkpoint, status: 'eq.success', select: 'id' })).length) continue
+  if (!dryRun && !force && (await db('crypto_backfill_checkpoints', { ...checkpoint, status: 'eq.success', select: 'id' })).length) return
   try {
     const timestamp = Math.floor(Date.parse(`${date}T00:00:00Z`) / 1000)
     const tokens = await provider('/tokens/snapshot', { addresses: address, timestamp })
@@ -112,11 +115,17 @@ for (const date of dates) for (const [index, address] of addresses.entries()) {
       const id = `${chainId}:${kind}:${hash(String(item.index ?? `${contract}:${item.protocol_group_id || ''}:${item.protocol_sub_group_id || ''}:${symbol}:${sign}`))}`
       if (identities.has(id)) throw new Error('Duplicate historical position identity')
       identities.add(id)
-      normalized.push({ id, chainId, kind, symbol: sign < 0 ? `${symbol}-DEBT` : symbol, name: item.contract_name || detail.name || item.protocol_group_name || symbol, contract, quantity, value, price: quantity ? Math.abs(value / quantity) : 0, protocol: item.protocol_group_name || item.protocol_group_id || null, assetClass: sign < 0 ? 'liability' : ['USDT','USDC','DAI','USDE','FRAX','LUSD','GHO','USD0','USDT0'].includes(symbol) ? 'stablecoin' : ['XAUT','XAUT0','PAXG'].includes(symbol) ? 'gold' : 'crypto' })
+      normalized.push({ id, chainId, kind, symbol: sign < 0 ? `${symbol}-DEBT` : symbol, name: item.contract_name || detail.name || item.protocol_group_name || symbol, contract, quantity, value, price: quantity ? Math.abs(value / quantity) : 0, protocol: item.protocol_group_name || item.protocol_group_id || null, assetClass: sign < 0 ? 'liability' : ['USDT','USDC','DAI','USDE','FRAX','LUSD','GHO','USD0','USDT0','RUSDC'].includes(symbol) ? 'stablecoin' : ['XAUT','XAUT0','PAXG'].includes(symbol) ? 'gold' : 'crypto' })
     }
     const total = normalized.reduce((sum, row) => sum + row.value, 0)
     console.log(JSON.stringify({ date, wallet: index + 1, mode: dryRun ? 'read-only' : 'write', positions: normalized.length, token_value_usd: +normalized.filter((r) => r.kind === 'token').reduce((s, r) => s + r.value, 0).toFixed(2), defi_value_usd: +normalized.filter((r) => r.kind === 'protocol').reduce((s, r) => s + r.value, 0).toFixed(2), total_value_usd: +total.toFixed(2), networks: [...new Set(normalized.map((r) => chains.get(r.chainId).chain_name))] }))
-    if (dryRun) continue
+    if (dryRun) return
+    if (!normalized.length) {
+      const end = new Date(`${date}T00:00:00Z`)
+      end.setUTCDate(end.getUTCDate() + 6)
+      const legacy = await db('position_snapshots', { owner_id: `eq.${ownerId}`, source_key: `like.backfill:${walletHash}:%`, and: `(snapshot_date.gte.${date},snapshot_date.lte.${end.toISOString().slice(0, 10)})`, select: 'value_usd' })
+      if (legacy.some((row) => Math.abs(Number(row.value_usd)) >= 0.01)) throw new Error('Empty provider response conflicts with retained legacy history; existing data preserved')
+    }
     const rows = []
     const markers = []
     const batch = hash(`${walletHash}:${date}:${Date.now()}`)
@@ -144,4 +153,6 @@ for (const date of dates) for (const [index, address] of addresses.entries()) {
     if (!dryRun) await db('crypto_backfill_checkpoints', { on_conflict: 'owner_id,wallet_hash,chain_name,snapshot_date' }, 'POST', { owner_id: ownerId, wallet_hash: walletHash, chain_name: checkpointChain, snapshot_date: date, status: 'failed', records_written: 0, message: error.message, completed_at: new Date().toISOString() })
   }
 }
+if (args.has('--newest-first')) dates.reverse()
+for (const date of dates) await Promise.all(addresses.map((address, index) => capture(date, address, index)))
 if (failed) process.exitCode = 1

@@ -162,7 +162,7 @@ async function loadRabby(addresses) {
     for (const chain of chains) {
       const chainId = String(chain.id ?? chain.community_id ?? "unknown");
       const chainName = chain.name || chainId;
-      const account = { name: `Wallet ${walletIndex + 1} · ${chainName}`, institution: "Rabby", account_type: "wallet", currency: "USD", source: "rabby" };
+      const account = { name: `Wallet · ${addresses[walletIndex].toLowerCase()} · ${chainName}`, institution: "Rabby", account_type: "wallet", currency: "USD", source: "rabby" };
       await new Promise((resolve) => setTimeout(resolve, 850));
       const tokens = await fetchJsonWithRetry(`https://api.rabby.io/v1/user/token_list?id=${encodeURIComponent(addresses[walletIndex])}&chain_id=${encodeURIComponent(chainId)}&is_all=false`, { headers });
       let history = { history_list: [] };
@@ -197,7 +197,7 @@ async function loadRabby(addresses) {
           value_usd: round(value),
           cost_basis_usd: estimatedPrice ? round(number(token.amount) * estimatedPrice) : null,
           source_key: `rabby:${hash(addresses[walletIndex])}:${chainId}:${hash(String(token.id))}`,
-          metadata: { wallet_index: walletIndex + 1, chain_id: chainId, estimated_acquisition_price_usd: estimatedPrice ? round(estimatedPrice, 8) : null, cost_basis_method: estimatedPrice ? "weighted historical price of recent external receipts" : null },
+          metadata: { wallet_index: walletIndex + 1, wallet_address: addresses[walletIndex].toLowerCase(), wallet_hash: hash(addresses[walletIndex].toLowerCase()), chain_id: chainId, estimated_acquisition_price_usd: estimatedPrice ? round(estimatedPrice, 8) : null, cost_basis_method: estimatedPrice ? "weighted historical price of recent external receipts" : null },
         });
       }
       const residual = number(chain.usd_value) - directValue;
@@ -208,7 +208,7 @@ async function loadRabby(addresses) {
         price_usd: residual,
         value_usd: round(residual),
         source_key: `rabby:${hash(addresses[walletIndex])}:${chainId}:defi`,
-        metadata: { wallet_index: walletIndex + 1, chain_id: chainId },
+        metadata: { wallet_index: walletIndex + 1, wallet_address: addresses[walletIndex].toLowerCase(), wallet_hash: hash(addresses[walletIndex].toLowerCase()), chain_id: chainId },
       });
     }
   }
