@@ -71,6 +71,7 @@ type TransactionGridRow = {
 }
 
 type EquityGridRow = {
+  quantity: number
   symbol: string
   name: string
   venueSplit: string
@@ -723,8 +724,8 @@ function Dashboard({ session }: { session: Session }) {
     const digitalPositions = positions.filter((position) => ['crypto', 'stablecoin'].includes(effectiveAssetClass(position.asset)) && shownSymbols.has(canonicalCryptoSymbol(position.asset.symbol)))
     const knownCostPositions = digitalPositions.filter((position) => position.cost_basis_usd != null)
     return {
-      value: knownCostPositions.length
-        ? knownCostPositions.reduce((sum, position) => sum + Number(position.value_usd) - Number(position.cost_basis_usd), 0)
+      value: cryptoExposure.some((asset) => asset.pricedQuantity > 0)
+        ? cryptoExposure.filter((asset) => asset.pricedQuantity > 0).reduce((sum, asset) => sum + asset.pricedValue - asset.pricedCost, 0)
         : null,
       hasMissingCost: knownCostPositions.length < digitalPositions.length,
     }
@@ -758,6 +759,7 @@ function Dashboard({ session }: { session: Session }) {
   const stockCostBasis = equityExposure.reduce((sum, asset) => sum + asset.pricedCost, 0)
   const stockPnl = equityExposure.reduce((sum, asset) => sum + asset.pricedValue - asset.pricedCost, 0)
   const equityGridRows = useMemo<EquityGridRow[]>(() => equityExposure.map((asset) => ({
+    quantity: asset.quantity,
     symbol: asset.symbol,
     name: asset.name,
     venueSplit: [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value).map(([name, detail]) => `${name} ${asset.value ? ((detail.value / asset.value) * 100).toFixed(0) : '0'}%`).join(' · '),
@@ -772,7 +774,7 @@ function Dashboard({ session }: { session: Session }) {
   const equityColumns = useMemo<ColDef<EquityGridRow>[]>(() => [
     { field: 'symbol', headerName: 'Asset / venue', minWidth: 105, flex: 1.8, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
     { field: 'averageBuy', headerName: 'Avg buy', minWidth: 60, flex: .8, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
-    { field: 'value', headerName: 'Value', minWidth: 65, flex: .9, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
+    { field: 'value', headerName: 'Value / units', minWidth: 85, flex: 1.1, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)), cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset grid-value"><strong>{formatMoney(data.value)}</strong><small>({formatAmount(data.quantity)} units)</small></span> : null },
     { field: 'pnl', headerName: 'Unrealized', minWidth: 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'realizedPnl', headerName: 'Realized', minWidth: 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'allocation', headerName: 'Alloc.', minWidth: 50, flex: .6, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
@@ -929,7 +931,7 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'assetClass', headerName: 'Class', minWidth: 120, filter: 'agTextColumnFilter' },
     { field: 'quantity', headerName: 'Quantity', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatAmount(Number(value)) },
     { field: 'price', headerName: 'Price', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoneyCents(Number(value)) },
-    { field: 'value', headerName: 'Value', minWidth: 115, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)) },
+    { field: 'value', headerName: 'Value / units', minWidth: 130, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)), cellRenderer: ({ data }: { data?: HoldingGridRow }) => data ? <span className="grid-asset grid-value"><strong>{formatMoney(data.value)}</strong><small>({formatAmount(data.quantity)} units)</small></span> : null },
     { field: 'pnl', headerName: 'P/L', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'weight', headerName: 'Weight', minWidth: 100, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(2)}%` },
   ], [formatMoney, formatMoneyCents])
@@ -1033,13 +1035,14 @@ function Dashboard({ session }: { session: Session }) {
 
                 <article className={overviewPanelClass('digital', 'overview-digital')}>
                   <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>Digital assets</h2></div><div className="panel-heading-actions"><div className="pnl-summary"><small>Total P/L</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="digital-columns" aria-hidden="true"><span>Asset / venue</span><span>Value / units</span><span>P/L</span><span>Alloc.</span></div>
                   <div className="asset-rows digital-rows">{cryptoExposure.map((asset) => {
                     const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
                     const open = expandedDigital === asset.symbol
                     const pnl = asset.pricedValue - asset.pricedCost
                     const hasCost = asset.pricedQuantity > 0
                     return <div className={`expandable-asset ${open ? 'open' : ''}`} key={asset.symbol}>
-                      <button onClick={() => setExpandedDigital(open ? null : asset.symbol)}><ChevronRight size={13} /><span className="symbol-cell"><strong>{asset.symbol}</strong><small>{details.slice(0, 2).map(([name, detail]) => `${name} ${((detail.value / asset.value) * 100).toFixed(0)}%`).join(' · ')}{details.length > 2 ? ` +${details.length - 2}` : ''}</small></span><b>{formatMoney(asset.value)}</b><span className={hasCost ? (pnl >= 0 ? 'asset-pnl value-positive' : 'asset-pnl value-negative') : 'asset-pnl'}>{hasCost ? `${pnl >= 0 ? '+' : ''}${formatMoney(pnl)}` : 'Cost pending'}</span><em>{crypto ? ((asset.value / crypto) * 100).toFixed(1) : '0.0'}%</em></button>
+                      <button onClick={() => setExpandedDigital(open ? null : asset.symbol)}><ChevronRight size={13} /><span className="symbol-cell"><strong>{asset.symbol}</strong><small>{details.slice(0, 2).map(([name, detail]) => `${name} ${((detail.value / asset.value) * 100).toFixed(0)}%`).join(' · ')}{details.length > 2 ? ` +${details.length - 2}` : ''}</small></span><span className="asset-value"><b>{formatMoney(asset.value)}</b><small>({formatAmount(asset.quantity)} units)</small></span><span className={hasCost ? (pnl >= 0 ? 'asset-pnl value-positive' : 'asset-pnl value-negative') : 'asset-pnl'}>{hasCost ? `${pnl >= 0 ? '+' : ''}${formatMoney(pnl)}` : 'Cost pending'}</span><em>{crypto ? ((asset.value / crypto) * 100).toFixed(1) : '0.0'}%</em></button>
                       {open && <div className="asset-breakdown digital-breakdown">{details.map(([name, detail]) => { const detailPnl = detail.pricedValue - detail.costBasis; const detailHasCost = detail.pricedQuantity > 0; return <div key={name}><span>{name}</span><strong>{formatAmount(detail.quantity)}</strong><small>{detailHasCost ? `Avg ${formatMoney(detail.costBasis / detail.pricedQuantity)}` : 'Average cost pending'}</small><b>{formatMoney(detail.value)}</b><em className={detailHasCost ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detailHasCost ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}</em></div> })}</div>}
                     </div>
                   })}</div>

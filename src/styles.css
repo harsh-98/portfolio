@@ -327,7 +327,14 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .equity-pnl-strip > span { display: grid; gap: 1px; }
 .equity-pnl-strip small { color: #66727a; font-size: 6px; text-transform: uppercase; letter-spacing: .04em; }
 .equity-pnl-strip strong { font-size: 9px; }
-.digital-rows .expandable-asset > button { grid-template-columns: 13px minmax(120px, 1fr) 62px 64px 42px; }
+.digital-columns { display: grid; grid-template-columns: minmax(0, 1fr) 90px 76px 42px; gap: 7px; padding: 0 2px 5px 22px; color: #69757d; font: 7px 'DM Mono', monospace; text-transform: uppercase; }
+.digital-columns span:not(:first-child) { text-align: right; }
+.digital-rows .expandable-asset > button { grid-template-columns: 13px minmax(0, 1fr) 90px 76px 42px; }
+.asset-value { min-width: 0; display: grid; gap: 2px; text-align: right; }
+.asset-value small { color: #849099; font: 8px 'DM Mono', monospace; overflow-wrap: anywhere; }
+.digital-rows .asset-pnl { overflow-wrap: anywhere; }
+.grid-value { text-align: right; }
+.grid-value small { white-space: normal; overflow-wrap: anywhere; }
 .digital-breakdown { margin-left: 21px; }
 .digital-breakdown > div { grid-template-columns: minmax(70px, 1fr) 70px 90px 60px 58px; align-items: center; }
 .digital-breakdown b, .digital-breakdown em { font-size: 7px; text-align: right; }
@@ -578,6 +585,11 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .equity-columns { grid-template-columns: minmax(120px, 1fr) 65px 48px; }
   .equity-columns span:nth-child(2), .equity-columns span:nth-child(4), .equity-rows .expandable-asset > button > span:not(.symbol-cell) { display: none; }
   .equity-rows .expandable-asset > button { grid-template-columns: 13px minmax(120px, 1fr) 65px 48px; }
-  .digital-rows .asset-pnl { display: none; }
-  .digital-rows .expandable-asset > button { grid-template-columns: 13px minmax(120px, 1fr) 62px 42px; }
+  .digital-columns { grid-template-columns: minmax(0, 1fr) 80px 68px; gap: 5px; }
+  .digital-columns span:last-child, .digital-rows .expandable-asset > button > em { display: none; }
+  .digital-rows .expandable-asset > button { grid-template-columns: 13px minmax(0, 1fr) 80px 68px; gap: 5px; }
+  .digital-breakdown > div { grid-template-columns: minmax(0, 1fr) auto; }
+  .digital-breakdown > div > span { grid-column: 1 / -1; }
+  .digital-breakdown small { grid-column: 1; grid-row: 3; }
+  .digital-breakdown em { grid-column: 2; grid-row: 3; }
 }
