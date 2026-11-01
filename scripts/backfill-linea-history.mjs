@@ -98,7 +98,7 @@ async function supabase(endpoint, { method = 'GET', body, prefer } = {}) {
 }
 
 let ownerId = process.env.PORTFOLIO_OWNER_ID?.trim() || credentials.PORTFOLIO_OWNER_ID?.trim()
-if (!ownerId) {
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ownerId || '')) {
   const users = await supabase('/auth/v1/admin/users?page=1&per_page=100')
   const email = required('PORTFOLIO_OWNER_EMAIL').toLowerCase()
   ownerId = users.users.find((user) => user.email?.toLowerCase() === email)?.id

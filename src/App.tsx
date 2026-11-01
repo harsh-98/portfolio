@@ -102,11 +102,6 @@ type CryptoRange = '3M' | '6M' | '1Y' | '3Y' | 'ALL'
 const cryptoRanges: CryptoRange[] = ['3M', '6M', '1Y', '3Y', 'ALL']
 const cryptoRangeDays: Record<Exclude<CryptoRange, 'ALL'>, number> = { '3M': 92, '6M': 183, '1Y': 365, '3Y': 1096 }
 
-function sampleEvenly<T>(values: T[], maximum: number) {
-  if (values.length <= maximum) return values
-  return Array.from({ length: maximum }, (_, index) => values[Math.round((index * (values.length - 1)) / (maximum - 1))])
-}
-
 function cryptoWeekBucket(date: string) {
   const value = new Date(`${date}T00:00:00Z`)
   const daysSinceTuesday = (value.getUTCDay() + 5) % 7
@@ -146,7 +141,7 @@ async function fetchAllPositionSnapshots() {
   for (let from = 0; ; from += pageSize) {
     const result = await supabase
       .from('position_snapshots')
-      .select('snapshot_date,source_key,quantity,price_usd,value_usd,account:accounts(name,institution),asset:assets(symbol,name,asset_class,network)')
+      .select('snapshot_date,source_key,quantity,price_usd,value_usd,metadata,account:accounts(name,institution),asset:assets(symbol,name,asset_class,network)')
       .order('snapshot_date', { ascending: true })
       .order('source_key', { ascending: true })
       .range(from, from + pageSize - 1)
@@ -828,8 +823,43 @@ function Dashboard({ session }: { session: Session }) {
     type AssetBalance = { label: string; value: number; quantity: number }
     type HistoryPoint = { date: string; total: number; platforms: Map<string, number>; assets: Map<string, Map<string, AssetBalance>> }
     const grouped = new Map<string, HistoryPoint>()
+    // Select one complete observation per wallet/network/week before summing assets.
+    // This prevents repeated dates/providers from multiplying the same balance.
+    const networkAliases: Record<string, string> = {
+      'eth-mainnet': 'ethereum', eth: 'ethereum', '1': 'ethereum',
+      'arbitrum-mainnet': 'arbitrum', arb: 'arbitrum', '42161': 'arbitrum',
+      'optimism-mainnet': 'optimism', op: 'optimism', '10': 'optimism',
+      'base-mainnet': 'base', '8453': 'base', 'linea-mainnet': 'linea', '59144': 'linea',
+      'matic-mainnet': 'polygon', matic: 'polygon', '137': 'polygon',
+      'bsc-mainnet': 'bnb chain', bsc: 'bnb chain', '56': 'bnb chain',
+      'gnosis-mainnet': 'gnosis', xdai: 'gnosis', '100': 'gnosis',
+      'avax-mainnet': 'avalanche', avax: 'avalanche', '43114': 'avalanche',
+      'zksync-mainnet': 'zksync', '324': 'zksync',
+    }
+    const publishedBatches = new Set(positionSnapshots
+      .filter((snapshot) => snapshot.metadata?.coverage_only && snapshot.metadata?.history_batch)
+      .map((snapshot) => `${snapshot.metadata?.history_batch}|${snapshot.metadata?.chain_id}`))
+    const observations = new Map<string, { date: string; priority: number; rows: PositionSnapshot[] }>()
     positionSnapshots.forEach((snapshot) => {
-      if (!snapshot.asset || !snapshot.account || !isDigitalAsset(snapshot.asset)) return
+      if (snapshot.metadata?.history_batch && !publishedBatches.has(`${snapshot.metadata.history_batch}|${snapshot.metadata.chain_id}`)) return
+      if (!snapshot.asset || !snapshot.account) return
+      if (!isDigitalAsset(snapshot.asset) && !(snapshot.asset.asset_class === 'liability' && snapshot.metadata?.wallet_hash)) return
+      const wallet = String(snapshot.metadata?.wallet_hash || snapshot.account.name.match(/0x[0-9a-f]{40}/i)?.[0]?.toLowerCase() || platformIdentity(snapshot.account, snapshot.source_key))
+      // Source hashes let legacy and newer providers use the same wallet identity.
+      const legacyHash = snapshot.source_key.match(/^(?:backfill|oneinch|history:oneinch):([a-f0-9]{12}):/i)?.[1]
+      const networkName = String(snapshot.metadata?.chain_id || snapshot.asset.network || 'unknown').toLowerCase()
+      const network = networkAliases[networkName] || networkName
+      const key = `${cryptoWeekBucket(snapshot.snapshot_date)}|${legacyHash || wallet}|${network}`
+      const priority = snapshot.source_key.startsWith('backfill:') ? 0 : snapshot.metadata?.history_complete ? 2 : 3
+      const current = observations.get(key)
+      if (!current || priority > current.priority || (priority === current.priority && snapshot.snapshot_date > current.date)) {
+        observations.set(key, { date: snapshot.snapshot_date, priority, rows: [snapshot] })
+      } else if (priority === current.priority && snapshot.snapshot_date === current.date) {
+        current.rows.push(snapshot)
+      }
+    })
+    ;[...observations.values()].flatMap((observation) => observation.rows).forEach((snapshot) => {
+      if (!snapshot.asset || !snapshot.account || snapshot.metadata?.coverage_only) return
       const week = cryptoWeekBucket(snapshot.snapshot_date)
       const current = grouped.get(week) || { date: week, total: 0, platforms: new Map<string, number>(), assets: new Map<string, Map<string, AssetBalance>>() }
       const value = Number(snapshot.value_usd)
@@ -862,7 +892,7 @@ function Dashboard({ session }: { session: Session }) {
     const cutoff = latest.toISOString().slice(0, 10)
     return selectedCryptoHistory.filter((point) => point.date >= cutoff)
   }, [selectedCryptoHistory, cryptoRange])
-  const chartCryptoHistory = useMemo(() => sampleEvenly(rangedCryptoHistory, 52), [rangedCryptoHistory])
+  const chartCryptoHistory = rangedCryptoHistory
   const cryptoChartData = useMemo(() => chartCryptoHistory.map((point) => ({ date: point.date, value: point.total })), [chartCryptoHistory])
   const currentDigitalValue = positions.filter((position) => isDigitalAsset(position.asset)).reduce((sum, position) => sum + Number(position.value_usd), 0)
   const firstCryptoPoint = cryptoHistory[0]
@@ -1135,8 +1165,8 @@ function Dashboard({ session }: { session: Session }) {
                 <article className="panel history-method-panel">
                   <div><p className="eyebrow">VALUATION METHOD</p><h2>Observed vs reconstructed</h2></div>
                   <p><strong>Observed</strong> snapshots use the balances and USD prices returned during each weekly sync. They are the source of truth going forward.</p>
-                  <p><strong>Reconstructed</strong> history uses historical balances at each weekly block plus that asset’s USD price on the same date. Chain observations are combined into Tuesday-to-Monday week buckets so a chain-only zero never appears as the wallet’s total. It will be labelled separately because DeFi receipt tokens and unsupported protocols may not reconstruct perfectly.</p>
-                  <span>Only positions worth at least $100 on that historical date are retained in the backfill.</span>
+                  <p><strong>Reconstructed</strong> history uses historical balances at each weekly block plus that asset’s USD price on the same date. Token and supported DeFi positions are combined across wallets and networks in Tuesday-to-Monday buckets. Each wallet/network contributes one observation per week. Unsupported networks and protocols can leave gaps; historical values are never inferred from today’s balance.</p>
+                  <span>The complete wallet backfill includes token and DeFi positions from $0.01; the dashboard’s $100 display filter does not apply to this chart.</span>
                 </article>
               </div>
             </section>

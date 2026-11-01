@@ -1024,7 +1024,7 @@ async function supabase(endpoint, { method = "GET", body, prefer } = {}) {
   return data;
 }
 let ownerId = configuredOwnerId;
-if (!ownerId) {
+if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ownerId || '')) {
   if (!ownerEmail) throw new Error("Missing PORTFOLIO_OWNER_ID or PORTFOLIO_OWNER_EMAIL");
   const users = await supabase("/auth/v1/admin/users?page=1&per_page=100");
   const owner = users.users.find((user) => user.email?.toLowerCase() === ownerEmail);

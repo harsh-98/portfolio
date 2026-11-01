@@ -10,7 +10,8 @@
     "sync:portfolio": "node scripts/sync-portfolio.mjs",
     "backfill:crypto": "node scripts/backfill-crypto-history.mjs",
     "backfill:linea": "node scripts/backfill-linea-history.mjs",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "backfill:wallets": "node scripts/backfill-wallet-history.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.80.0",

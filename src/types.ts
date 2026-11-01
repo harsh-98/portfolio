@@ -34,6 +34,7 @@ export interface Position {
 }
 
 export interface PositionSnapshot {
+  metadata?: Record<string, unknown>
   id?: string
   snapshot_date: string
   source_key: string
