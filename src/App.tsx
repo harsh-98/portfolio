@@ -242,6 +242,24 @@ function positionPlatform(position: Position) {
   return platformIdentity(position.account, position.source_key)
 }
 
+function networkDisplayName(network: string | null) {
+  if (!network) return 'Other holdings'
+  const names: Record<string, string> = {
+    eth: 'Ethereum', 'eth-mainnet': 'Ethereum', '1': 'Ethereum',
+    arb: 'Arbitrum', 'arbitrum-mainnet': 'Arbitrum', '42161': 'Arbitrum',
+    op: 'Optimism', 'optimism-mainnet': 'Optimism', '10': 'Optimism',
+    'base-mainnet': 'Base', base: 'Base', '8453': 'Base',
+    matic: 'Polygon', 'matic-mainnet': 'Polygon', '137': 'Polygon',
+    bsc: 'BNB Chain', 'bsc-mainnet': 'BNB Chain', '56': 'BNB Chain',
+    'plasma-mainnet': 'Plasma', plasma: 'Plasma', '9745': 'Plasma',
+    'linea-mainnet': 'Linea', linea: 'Linea', '59144': 'Linea',
+    '324': 'zkSync', 'zksync-mainnet': 'zkSync', zksync: 'zkSync',
+    '143': 'Monad', monad: 'Monad', '999': 'HyperEVM', hyperevm: 'HyperEVM',
+    hyperliquid: 'Hyperliquid', binance: 'Binance', wio: 'Wio', xtb: 'XTB',
+  }
+  return names[network.toLowerCase()] || network
+}
+
 function digitalPositionLocation(position: Position) {
   const platform = positionPlatform(position)
   if (!platform.startsWith('0x')) return platform
@@ -509,6 +527,23 @@ function Dashboard({ session }: { session: Session }) {
   const [expandedDigital, setExpandedDigital] = useState<string | null>(null)
   const [expandedEquity, setExpandedEquity] = useState<string | null>(null)
   const [selectedAllocation, setSelectedAllocation] = useState<AssetClass | null>(null)
+  const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null)
+  const platformTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const closePlatformDetail = useCallback(() => {
+    setSelectedPlatform(null)
+    window.requestAnimationFrame(() => platformTriggerRef.current?.focus())
+  }, [])
+  useEffect(() => {
+    if (!selectedPlatform) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closePlatformDetail()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [selectedPlatform, closePlatformDetail])
   const [selectedBrokerDetail, setSelectedBrokerDetail] = useState<{ symbol: string; venue: string } | null>(null)
   const [brokerFullscreen, setBrokerFullscreen] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState<OverviewPanel | null>(null)
@@ -761,6 +796,23 @@ function Dashboard({ session }: { session: Session }) {
     })
     return [...grouped.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value)
   }, [positions])
+  const selectedPlatformDetail = useMemo(() => {
+    if (!selectedPlatform) return null
+    const matching = positions.filter((position) => positionPlatform(position) === selectedPlatform)
+    const networks = new Map<string, { name: string; value: number; positions: Position[] }>()
+    matching.forEach((position) => {
+      const name = networkDisplayName(position.asset.network)
+      const network = networks.get(name) || { name, value: 0, positions: [] }
+      network.value += Number(position.value_usd)
+      network.positions.push(position)
+      networks.set(name, network)
+    })
+    return {
+      value: matching.reduce((sum, position) => sum + Number(position.value_usd), 0),
+      count: matching.length,
+      networks: [...networks.values()].map((network) => ({ ...network, positions: network.positions.sort((a, b) => Number(b.value_usd) - Number(a.value_usd)) })).sort((a, b) => b.value - a.value),
+    }
+  }, [positions, selectedPlatform])
   const equityPositions = positions.filter((position) => position.asset.asset_class === 'equity')
   const cryptoExposure = useMemo(() => {
     const grouped = new Map<string, { symbol: string; name: string; value: number; quantity: number; pricedCost: number; pricedValue: number; pricedQuantity: number; breakdown: Map<string, { value: number; quantity: number; costBasis: number; pricedValue: number; pricedQuantity: number }> }>()
@@ -1003,6 +1055,7 @@ function Dashboard({ session }: { session: Session }) {
   function chooseView(next: View) {
     setView(next)
     setMobileNav(false)
+    if (next !== 'overview') setSelectedPlatform(null)
   }
 
   function shiftSpendMonth(delta: number) {
@@ -1064,8 +1117,12 @@ function Dashboard({ session }: { session: Session }) {
 
               <div className="overview-grid">
                 <article className={overviewPanelClass('platforms', 'overview-platforms')}>
-                  <div className="panel-heading"><div><p className="eyebrow">BY PLATFORM / ADDRESS</p><h2>Portfolio network</h2></div><div className="panel-heading-actions"><span className="panel-badge">{platformTotals.length}</span><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'platforms' ? null : 'platforms')} aria-label="Expand portfolio network">{expandedPanel === 'platforms' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
-                  <div className="platform-list">{platformTotals.map((source) => <div key={source.name}><span><strong>{source.name}</strong><small>{total ? ((source.value / total) * 100).toFixed(1) : '0.0'}%</small></span><b>{formatMoney(source.value)}</b></div>)}</div>
+                  <div className="panel-heading" inert={Boolean(selectedPlatform)}><div><p className="eyebrow">BY PLATFORM / ADDRESS</p><h2>Portfolio network</h2></div><div className="panel-heading-actions"><span className="panel-badge">{platformTotals.length}</span><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'platforms' ? null : 'platforms')} aria-label="Expand portfolio network">{expandedPanel === 'platforms' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="platform-list" inert={Boolean(selectedPlatform)}>{platformTotals.map((source) => <button type="button" key={source.name} onClick={(event) => { platformTriggerRef.current = event.currentTarget; setSelectedPlatform(source.name) }} aria-label={`View ${source.name} assets across networks`}><span><strong>{source.name}</strong><small>{total ? ((source.value / total) * 100).toFixed(1) : '0.0'}%</small></span><b>{formatMoney(source.value)}</b><ChevronRight size={11} /></button>)}</div>
+                  {selectedPlatform && selectedPlatformDetail && <div className="platform-drilldown" role="region" aria-label={`${selectedPlatform} assets`}>
+                    <div className="platform-detail-heading"><div><p className="eyebrow">ASSETS BY NETWORK</p><h2>{selectedPlatform}</h2><small>{selectedPlatformDetail.count} holdings · {formatMoney(selectedPlatformDetail.value)}</small></div><div className="panel-heading-actions"><button type="button" className="platform-detail-action" onClick={() => setExpandedPanel(expandedPanel === 'platforms' ? null : 'platforms')} aria-label={expandedPanel === 'platforms' ? 'Minimize asset list' : 'Expand asset list'}>{expandedPanel === 'platforms' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button><button type="button" className="platform-detail-action" onClick={closePlatformDetail} aria-label="Close asset list" autoFocus><X size={14} /></button></div></div>
+                    <div className="platform-network-list">{selectedPlatformDetail.networks.map((network) => <section key={network.name}><h3><span>{network.name}</span><b>{formatMoney(network.value)}</b></h3>{network.positions.map((position) => <div className="platform-asset-row" key={position.id}><span><strong>{position.asset.symbol}</strong><small>{position.asset.name}</small><small>{String(position.metadata?.protocol_name || position.account.name.split(' · ').at(-1) || position.account.institution)}</small></span><span className="platform-asset-value"><b>{formatMoney(Number(position.value_usd))}</b><small>({formatAmount(Number(position.quantity))} units)</small></span></div>)}</section>)}{!selectedPlatformDetail.count && <p className="activity-empty">No current holdings in this category.</p>}</div>
+                  </div>}
                 </article>
 
                 <article className={overviewPanelClass('allocation', 'overview-allocation')}>
