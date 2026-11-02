@@ -269,9 +269,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .platform-list b { grid-column: 1; grid-row: 2; color: #edf2f4; font-size: 10px; }
 .platform-list > button:hover { background: #151d22; }
 .platform-list > button:focus-visible { outline: 1px solid var(--green); outline-offset: -2px; }
-.platform-network-hint { flex: 0 0 auto; margin: 0 0 8px; color: #94b4a3; font-size: 9px; line-height: 1.4; }
-.platform-list .platform-card-action { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; gap: 4px; width: max-content; padding-top: 3px; color: var(--green); font-size: 8px; text-decoration: underline; text-underline-offset: 2px; }
-.platform-card-action svg { flex: 0 0 auto; }
+.platform-list > button > svg { grid-column: 2; grid-row: 1 / 3; color: #74828b; }
 .platform-drilldown { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; padding: 12px; background: var(--panel); }
 .platform-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; flex: 0 0 auto; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 .platform-detail-heading > div:first-child { min-width: 0; }
