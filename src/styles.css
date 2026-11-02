@@ -546,6 +546,20 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 }
 
 @media (max-width: 700px) {
+  .overview-grid > .overview-equities.panel-expanded { inset: 8px; padding: 10px; }
+  .overview-equities .panel-heading { gap: 8px; }
+  .overview-equities .panel-heading h2 { font-size: 16px; }
+  .overview-equities .panel-heading-actions, .equity-pnl-strip { gap: 6px; }
+  .equity-pnl-strip strong { font-size: 8px; }
+  .equity-grid { --ag-font-size: 9px; --ag-cell-horizontal-padding: 3px; }
+  .equity-grid .ag-cell { font-size: 9px; padding-inline: 3px; }
+  .equity-grid .ag-header-cell { padding-inline: 3px; font-size: 8px; }
+  .equity-grid .ag-header-cell-label { gap: 2px; }
+  .equity-grid .grid-asset strong { font-size: 9px; }
+  .equity-grid .grid-asset small { font-size: 7px; }
+  .equity-grid .grid-value small { white-space: nowrap; overflow-wrap: normal; }
+  .overview-equities .equity-footer { gap: 8px; font-size: 7px; }
+
   .login-shell { grid-template-columns: 1fr; }
   .login-story { min-height: 40vh; padding: 28px 22px; }
   .story-copy h1 { font-size: 44px; margin: 34px 0 14px; }

@@ -547,6 +547,13 @@ function Dashboard({ session }: { session: Session }) {
   const [selectedBrokerDetail, setSelectedBrokerDetail] = useState<{ symbol: string; venue: string } | null>(null)
   const [brokerFullscreen, setBrokerFullscreen] = useState(false)
   const [expandedPanel, setExpandedPanel] = useState<OverviewPanel | null>(null)
+  const [compactStocks, setCompactStocks] = useState(() => window.matchMedia('(max-width: 700px)').matches)
+  useEffect(() => {
+    const query = window.matchMedia('(max-width: 700px)')
+    const update = () => setCompactStocks(query.matches)
+    query.addEventListener('change', update)
+    return () => query.removeEventListener('change', update)
+  }, [])
   const [spendMonth, setSpendMonth] = useState(new Date().toISOString().slice(0, 7))
   const [selectedCardSources, setSelectedCardSources] = useState(['ether.fi', 'kast', 'ethena'])
   const [selectedActivityTypes, setSelectedActivityTypes] = useState(['purchase', 'refund', 'cashback'])
@@ -896,13 +903,13 @@ function Dashboard({ session }: { session: Session }) {
     allocation: equities ? (asset.value / equities) * 100 : 0,
   })), [brokerageTransactions, equities, equityExposure])
   const equityColumns = useMemo<ColDef<EquityGridRow>[]>(() => [
-    { field: 'symbol', headerName: 'Asset / venue', minWidth: 105, flex: 1.8, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
-    { field: 'averageBuy', headerName: 'Avg buy', minWidth: 60, flex: .8, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
-    { field: 'value', headerName: 'Value / units', minWidth: 85, flex: 1.1, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)), cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset grid-value"><strong>{formatMoney(data.value)}</strong><small>({formatAmount(data.quantity)} units)</small></span> : null },
-    { field: 'pnl', headerName: 'Unrealized', minWidth: 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
-    { field: 'realizedPnl', headerName: 'Realized', minWidth: 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
-    { field: 'allocation', headerName: 'Alloc.', minWidth: 50, flex: .6, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
-  ], [formatMoney, formatMoneyCents])
+    { field: 'symbol', headerName: compactStocks ? 'Asset' : 'Asset / venue', minWidth: compactStocks ? 58 : 105, flex: 1.8, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
+    { field: 'averageBuy', headerName: compactStocks ? 'Avg' : 'Avg buy', minWidth: compactStocks ? 42 : 60, flex: .8, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
+    { field: 'value', headerName: compactStocks ? 'Value' : 'Value / units', minWidth: compactStocks ? 65 : 85, flex: 1.1, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)), cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset grid-value"><strong>{formatMoney(data.value)}</strong><small>({formatAmount(data.quantity)} units)</small></span> : null },
+    { field: 'pnl', headerName: compactStocks ? 'Unreal.' : 'Unrealized', minWidth: compactStocks ? 56 : 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
+    { field: 'realizedPnl', headerName: compactStocks ? 'Real.' : 'Realized', minWidth: compactStocks ? 56 : 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
+    { field: 'allocation', headerName: compactStocks ? '%' : 'Alloc.', minWidth: compactStocks ? 30 : 50, flex: .6, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
+  ], [compactStocks, formatMoney, formatMoneyCents])
   const brokerageByAsset = useMemo(() => {
     const grouped = new Map<string, BrokerageTransaction[]>()
     brokerageTransactions.forEach((transaction) => {
@@ -1152,7 +1159,7 @@ function Dashboard({ session }: { session: Session }) {
 
                 <article className={overviewPanelClass('equities', 'overview-equities')}>
                   <div className="panel-heading"><div><p className="eyebrow">STOCKS &amp; ETFS</p><h2>{formatMoney(equities)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={stockPnl >= 0 ? 'value-positive' : 'value-negative'}>{stockPnl >= 0 ? '+' : ''}{formatMoney(stockPnl)}</strong></span><span><small>Realized</small><strong className={realizedXtb >= 0 ? 'value-positive' : 'value-negative'}>{realizedXtb >= 0 ? '+' : ''}{formatMoney(realizedXtb)}</strong></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'equities' ? null : 'equities')} aria-label="Expand stocks and ETFs">{expandedPanel === 'equities' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
-                  <div className="equity-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={equityGridRows} columnDefs={equityColumns} defaultColDef={{ sortable: true, resizable: true }} getRowId={({ data }) => data.symbol} rowHeight={34} headerHeight={30} onRowClicked={({ data }) => data && setExpandedEquity(data.symbol)} /></div>
+                  <div className="equity-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={equityGridRows} columnDefs={equityColumns} defaultColDef={{ sortable: true, resizable: true, suppressHeaderFilterButton: compactStocks }} getRowId={({ data }) => data.symbol} rowHeight={34} headerHeight={30} onRowClicked={({ data }) => data && setExpandedEquity(data.symbol)} /></div>
                   <div className="equity-footer"><span>{equityExposure.length} securities · {formatMoney(stockCostBasis)} known cost</span><span>{brokerageTransactions.length ? 'Realized P/L from XTB history' : 'Realized P/L unavailable'}</span></div>
                   {expandedEquity && (() => {
                     const asset = equityExposure.find((item) => item.symbol === expandedEquity)
