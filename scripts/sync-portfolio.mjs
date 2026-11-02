@@ -129,7 +129,7 @@ async function fetchJson(url, options = {}) {
   const text = await response.text();
   let data;
   try { data = text ? JSON.parse(text) : null; } catch { data = { message: text.slice(0, 200) }; }
-  if (!response.ok) throw new Error(`${response.status} ${url}: ${data?.message ?? "request failed"}`);
+  if (!response.ok) throw new Error(`${response.status} ${new URL(url).origin}${new URL(url).pathname}: ${data?.message ?? "request failed"}`);
   return data;
 }
 
