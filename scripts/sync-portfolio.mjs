@@ -1203,3 +1203,5 @@ for (const stale of existingSnapshots.filter((position) => !currentSnapshotKeys.
   await supabase(`/rest/v1/position_snapshots?id=eq.${stale.id}`, { method: "DELETE" });
 }
 console.log(JSON.stringify({ as_of: now, fx, sources: summarize(sourcePositions), source_errors: sourceErrors, xtb_history_records: xtbTransactions.length, etherfi_spend_records: etherfiSpendTransactions.length, kast_spend_records: kastSpendTransactions.length, snapshot_positions: positionSnapshots.length, portfolio: totals }, null, 2));
+
+execFileSync("python3", [new URL("./build-history-charts.py", import.meta.url).pathname], { stdio: "inherit" });

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
+
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 
@@ -169,3 +171,5 @@ for (const plan of plans) {
   }
 }
 console.log(JSON.stringify({ completed_weeks: completed, snapshot_rows_written: written }, null, 2));
+
+execFileSync("python3", [new URL("./build-history-charts.py", import.meta.url).pathname], { stdio: "inherit" });

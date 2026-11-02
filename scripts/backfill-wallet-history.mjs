@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+
+import { execFileSync } from "node:child_process";
 // Historical wallet tokens AND DeFi; credentials stay in the protected key file.
 import fs from 'node:fs/promises'
 import { createHash } from 'node:crypto'
@@ -156,3 +158,5 @@ async function capture(date, address, index) {
 if (args.has('--newest-first')) dates.reverse()
 for (const date of dates) await Promise.all(addresses.map((address, index) => capture(date, address, index)))
 if (failed) process.exitCode = 1
+
+if (!dryRun) execFileSync("python3", [new URL("./build-history-charts.py", import.meta.url).pathname], { stdio: "inherit" });

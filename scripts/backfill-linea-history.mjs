@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
+
 import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 
@@ -167,3 +169,5 @@ for (const date of dates) {
 }
 
 console.log(JSON.stringify({ chain: chainName, from: fromDate, to: toDate, wallets: addresses.length, completed_weeks: completedWeeks, snapshot_rows_written: rowsWritten }, null, 2))
+
+execFileSync("python3", [new URL("./build-history-charts.py", import.meta.url).pathname], { stdio: "inherit" });

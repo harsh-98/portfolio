@@ -27,7 +27,7 @@ import {
   X,
 } from 'lucide-react'
 import { isConfigured, supabase } from './lib/supabase'
-import type { Account, AssetClass, BrokerageTransaction, LossEvent, Position, PositionSnapshot, Snapshot, SpendTransaction, SyncRun } from './types'
+import type { Account, AssetClass, BrokerageTransaction, LossEvent, Position, Snapshot, SpendTransaction, SyncRun } from './types'
 
 ModuleRegistry.registerModules([AllCommunityModule])
 
@@ -100,14 +100,17 @@ type DisplayCurrency = 'USD' | 'INR'
 type CryptoRange = '3M' | '6M' | '1Y' | '3Y' | 'ALL'
 
 const cryptoRanges: CryptoRange[] = ['3M', '6M', '1Y', '3Y', 'ALL']
-const cryptoRangeDays: Record<Exclude<CryptoRange, 'ALL'>, number> = { '3M': 92, '6M': 183, '1Y': 365, '3Y': 1096 }
-
-function cryptoWeekBucket(date: string) {
-  const value = new Date(`${date}T00:00:00Z`)
-  const daysSinceTuesday = (value.getUTCDay() + 5) % 7
-  value.setUTCDate(value.getUTCDate() - daysSinceTuesday)
-  return value.toISOString().slice(0, 10)
+type HistoryComposition = {
+  platforms: Record<string, number>
+  assets: Record<string, Record<string, { label: string; value: number; quantity: number }>>
 }
+type HistoryChartPayload = {
+  points: { date: string; total: number; platforms: Record<string, number> }[]
+  start: HistoryComposition
+  latest: HistoryComposition
+  stats: { first_date: string; last_date: string; first_total: number; last_total: number; week_count: number; previous_date: string | null; latest_change: number }
+}
+type HistoryChartManifest = { built_at: string; platforms: string[]; keys: Record<string, string>; max_points: number }
 
 const money = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -133,24 +136,6 @@ function formatMoneyCents(value: number) {
 
 function formatAmount(value: number) {
   return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(value)
-}
-
-async function fetchAllPositionSnapshots(signal: AbortSignal, onProgress: (rows: number) => void) {
-  const pageSize = 1000
-  const rows: PositionSnapshot[] = []
-  for (let from = 0; ; from += pageSize) {
-    const result = await supabase
-      .from('position_snapshots')
-      .select('snapshot_date,source_key,quantity,price_usd,value_usd,metadata,account:accounts(name,institution),asset:assets(symbol,name,asset_class,network)')
-      .order('snapshot_date', { ascending: true })
-      .order('source_key', { ascending: true })
-      .range(from, from + pageSize - 1)
-      .abortSignal(signal)
-    if (result.error) return { data: rows, error: result.error }
-    rows.push(...((result.data || []) as unknown as PositionSnapshot[]))
-    onProgress(rows.length)
-    if ((result.data || []).length < pageSize) return { data: rows, error: null }
-  }
 }
 
 function spendCashback(transaction: SpendTransaction) {
@@ -505,11 +490,12 @@ function Dashboard({ session }: { session: Session }) {
   const [positions, setPositions] = useState<Position[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
-  const [positionSnapshots, setPositionSnapshots] = useState<PositionSnapshot[]>([])
+  const [historyPayload, setHistoryPayload] = useState<HistoryChartPayload | null>(null)
+  const [historyManifest, setHistoryManifest] = useState<HistoryChartManifest | null>(null)
+  const historyManifestRef = useRef<HistoryChartManifest | null>(null)
+  const historyCacheRef = useRef(new Map<string, HistoryChartPayload>())
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState('')
-  const [historyProgress, setHistoryProgress] = useState(0)
-  const historyLoadedRef = useRef(false)
   const historyAbortRef = useRef<AbortController | null>(null)
   const loadAbortRef = useRef<AbortController | null>(null)
   const [syncRuns, setSyncRuns] = useState<SyncRun[]>([])
@@ -612,27 +598,45 @@ function Dashboard({ session }: { session: Session }) {
     }
   }, [])
 
-  const loadHistory = useCallback(async () => {
+  const loadHistory = useCallback(async (force = false) => {
     historyAbortRef.current?.abort()
     const controller = new AbortController()
     historyAbortRef.current = controller
     setHistoryLoading(true)
     setHistoryError('')
-    setHistoryProgress(0)
+    setHistoryPayload(null)
     const timeout = window.setTimeout(() => {
       if (historyAbortRef.current !== controller) return
       setHistoryError('History loading took too long. Please retry.')
       setHistoryLoading(false)
       controller.abort()
-    }, 120000)
+    }, 30000)
     try {
-      const result = await fetchAllPositionSnapshots(controller.signal, setHistoryProgress)
-      if (controller.signal.aborted) return
-      if (result.error) setHistoryError(result.error.message)
-      else {
-        setPositionSnapshots(result.data)
-        historyLoadedRef.current = true
+      let manifest = historyManifestRef.current
+      if (force || !manifest) {
+        const result = await supabase.from('assets').select('manifest:metadata->manifest').eq('symbol', '_HISTORY_CHART_CACHE').eq('network', 'chart-cache:v1').abortSignal(controller.signal).single()
+        if (controller.signal.aborted) return
+        if (result.error) throw new Error(result.error.message)
+        manifest = result.data.manifest as unknown as HistoryChartManifest
+        if (!manifest?.keys) throw new Error('History summary is unavailable. Please retry after the next import.')
+        if (force || manifest.built_at !== historyManifestRef.current?.built_at) historyCacheRef.current.clear()
+        historyManifestRef.current = manifest
+        setHistoryManifest(manifest)
       }
+      const scope = manifest.keys[selectedCryptoPlatform]
+      if (!scope) throw new Error('This wallet history is unavailable. Select another wallet or refresh.')
+      const key = `${scope}:${cryptoRange}`
+      let payload = historyCacheRef.current.get(key)
+      if (!payload) {
+        // Supabase projects just the selected summary, never the raw history.
+        const result = await supabase.from('assets').select(`chart:metadata->datasets->${scope}->r_${cryptoRange}`).eq('symbol', '_HISTORY_CHART_CACHE').eq('network', 'chart-cache:v1').abortSignal(controller.signal).single()
+        if (controller.signal.aborted) return
+        if (result.error) throw new Error(result.error.message)
+        payload = (result.data as unknown as { chart: HistoryChartPayload }).chart
+        if (!payload?.points || payload.points.length > 200) throw new Error('Invalid chart summary. Please refresh.')
+        historyCacheRef.current.set(key, payload)
+      }
+      setHistoryPayload(payload)
     } catch (failure) {
       if (!controller.signal.aborted) setHistoryError(failure instanceof Error ? failure.message : 'Unable to load wallet history.')
     } finally {
@@ -642,14 +646,14 @@ function Dashboard({ session }: { session: Session }) {
         setHistoryLoading(false)
       }
     }
-  }, [])
+  }, [cryptoRange, selectedCryptoPlatform])
 
   useEffect(() => {
     void load()
     return () => loadAbortRef.current?.abort()
   }, [load])
   useEffect(() => {
-    if (view === 'crypto' && !historyLoadedRef.current) void loadHistory()
+    if (view === 'crypto') void loadHistory()
     return () => {
       historyAbortRef.current?.abort()
       setHistoryLoading(false)
@@ -892,95 +896,25 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'amount', headerName: 'Amount', minWidth: 105, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoney(Number(value)) },
     { field: 'realizedPnl', headerName: 'Realized P/L', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
   ], [formatMoney, formatMoneyCents])
-  const cryptoHistory = useMemo(() => {
-    type AssetBalance = { label: string; value: number; quantity: number }
-    type HistoryPoint = { date: string; total: number; platforms: Map<string, number>; assets: Map<string, Map<string, AssetBalance>> }
-    const grouped = new Map<string, HistoryPoint>()
-    // Select one complete observation per wallet/network/week before summing assets.
-    // This prevents repeated dates/providers from multiplying the same balance.
-    const networkAliases: Record<string, string> = {
-      'eth-mainnet': 'ethereum', eth: 'ethereum', '1': 'ethereum',
-      'arbitrum-mainnet': 'arbitrum', arb: 'arbitrum', '42161': 'arbitrum',
-      'optimism-mainnet': 'optimism', op: 'optimism', '10': 'optimism',
-      'base-mainnet': 'base', '8453': 'base', 'linea-mainnet': 'linea', '59144': 'linea',
-      'matic-mainnet': 'polygon', matic: 'polygon', '137': 'polygon',
-      'bsc-mainnet': 'bnb chain', bsc: 'bnb chain', '56': 'bnb chain',
-      'gnosis-mainnet': 'gnosis', xdai: 'gnosis', '100': 'gnosis',
-      'avax-mainnet': 'avalanche', avax: 'avalanche', '43114': 'avalanche',
-      'zksync-mainnet': 'zksync', '324': 'zksync',
-    }
-    const walletHash = (snapshot: PositionSnapshot) => String(snapshot.metadata?.wallet_hash || snapshot.source_key.match(/^(?:backfill|oneinch|rabby|debank|history:oneinch):([a-f0-9]{12}):/i)?.[1] || '')
-    const walletLabels = new Map<string, string>()
-    positionSnapshots.forEach((snapshot) => {
-      const address = snapshot.account && shortAddress(snapshot.account.name)
-      const hash = walletHash(snapshot)
-      if (address && hash) walletLabels.set(hash, address)
-    })
-    const publishedBatches = new Set(positionSnapshots
-      .filter((snapshot) => snapshot.metadata?.coverage_only && snapshot.metadata?.history_batch)
-      .map((snapshot) => `${snapshot.metadata?.history_batch}|${snapshot.metadata?.chain_id}`))
-    const observations = new Map<string, { date: string; priority: number; rows: PositionSnapshot[] }>()
-    positionSnapshots.forEach((snapshot) => {
-      if (snapshot.metadata?.history_batch && !publishedBatches.has(`${snapshot.metadata.history_batch}|${snapshot.metadata.chain_id}`)) return
-      if (!snapshot.asset || !snapshot.account) return
-      if (!isDigitalAsset(snapshot.asset) && !(snapshot.asset.asset_class === 'liability' && walletHash(snapshot))) return
-      const wallet = String(snapshot.metadata?.wallet_hash || snapshot.account.name.match(/0x[0-9a-f]{40}/i)?.[0]?.toLowerCase() || platformIdentity(snapshot.account, snapshot.source_key))
-      // Source hashes let legacy and newer providers use the same wallet identity.
-      const legacyHash = walletHash(snapshot)
-      const networkName = String(snapshot.metadata?.chain_id || snapshot.asset.network || 'unknown').toLowerCase()
-      const network = networkAliases[networkName] || networkName
-      const key = `${cryptoWeekBucket(snapshot.snapshot_date)}|${legacyHash || wallet}|${network}`
-      const priority = snapshot.source_key.startsWith('backfill:') ? 0 : snapshot.metadata?.history_complete ? 2 : 3
-      const current = observations.get(key)
-      if (!current || priority > current.priority || (priority === current.priority && snapshot.snapshot_date > current.date)) {
-        observations.set(key, { date: snapshot.snapshot_date, priority, rows: [snapshot] })
-      } else if (priority === current.priority && snapshot.snapshot_date === current.date) {
-        current.rows.push(snapshot)
-      }
-    })
-    ;[...observations.values()].flatMap((observation) => observation.rows).forEach((snapshot) => {
-      if (!snapshot.asset || !snapshot.account || snapshot.metadata?.coverage_only) return
-      const week = cryptoWeekBucket(snapshot.snapshot_date)
-      const current = grouped.get(week) || { date: week, total: 0, platforms: new Map<string, number>(), assets: new Map<string, Map<string, AssetBalance>>() }
-      const value = Number(snapshot.value_usd)
-      const platform = walletLabels.get(walletHash(snapshot)) || platformIdentity(snapshot.account, snapshot.source_key)
-      const network = snapshot.asset.network ? ` · ${snapshot.asset.network}` : ''
-      const assetKey = `${snapshot.asset.symbol}${network}`
-      const platformAssets = current.assets.get(platform) || new Map<string, AssetBalance>()
-      const asset = platformAssets.get(assetKey) || { label: assetKey, value: 0, quantity: 0 }
-      current.total += value
-      current.platforms.set(platform, (current.platforms.get(platform) || 0) + value)
-      asset.value += value
-      asset.quantity += Number(snapshot.quantity || 0)
-      platformAssets.set(assetKey, asset)
-      current.assets.set(platform, platformAssets)
-      grouped.set(week, current)
-    })
-    return [...grouped.values()].sort((a, b) => a.date.localeCompare(b.date))
-  }, [positionSnapshots])
-  const cryptoPlatforms = useMemo(() => [...new Set(cryptoHistory.flatMap((point) => [...point.platforms.keys()]))].sort(), [cryptoHistory])
-  const selectedCryptoHistory = useMemo(() => cryptoHistory
-    .filter((point) => selectedCryptoPlatform === 'all' || point.platforms.has(selectedCryptoPlatform))
-    .map((point) => ({
+  const cryptoHistory = useMemo(() => (historyPayload?.points || []).map((point, index, points) => {
+    const composition = index === points.length - 1 ? historyPayload?.latest : index === 0 ? historyPayload?.start : undefined
+    return {
       ...point,
-      total: selectedCryptoPlatform === 'all' ? point.total : point.platforms.get(selectedCryptoPlatform) as number,
-    })), [cryptoHistory, selectedCryptoPlatform])
-  const rangedCryptoHistory = useMemo(() => {
-    if (cryptoRange === 'ALL' || !selectedCryptoHistory.length) return selectedCryptoHistory
-    const latest = new Date(`${selectedCryptoHistory[selectedCryptoHistory.length - 1].date}T00:00:00Z`)
-    latest.setUTCDate(latest.getUTCDate() - cryptoRangeDays[cryptoRange])
-    const cutoff = latest.toISOString().slice(0, 10)
-    return selectedCryptoHistory.filter((point) => point.date >= cutoff)
-  }, [selectedCryptoHistory, cryptoRange])
-  const chartCryptoHistory = rangedCryptoHistory
+      platforms: new Map(Object.entries(point.platforms)),
+      assets: new Map(Object.entries(composition?.assets || {}).map(([name, assets]) => [name, new Map(Object.entries(assets))])),
+    }
+  }), [historyPayload])
+  const cryptoPlatforms = historyManifest?.platforms || []
+  const rangedCryptoHistory = cryptoHistory
+  const chartCryptoHistory = cryptoHistory
   const cryptoChartData = useMemo(() => chartCryptoHistory.map((point) => ({ date: point.date, value: point.total })), [chartCryptoHistory])
   const currentDigitalValue = positions.filter((position) => isDigitalAsset(position.asset)).reduce((sum, position) => sum + Number(position.value_usd), 0)
-  const firstCryptoPoint = cryptoHistory[0]
+  const firstCryptoPoint = historyPayload ? { date: historyPayload.stats.first_date, total: historyPayload.stats.first_total } : undefined
   const latestCryptoPoint = cryptoHistory[cryptoHistory.length - 1]
   const firstRangeCryptoPoint = rangedCryptoHistory[0]
   const latestRangeCryptoPoint = rangedCryptoHistory[rangedCryptoHistory.length - 1]
-  const priorCryptoPoint = cryptoHistory[cryptoHistory.length - 2]
-  const cryptoWeeklyChange = latestCryptoPoint && priorCryptoPoint ? latestCryptoPoint.total - priorCryptoPoint.total : 0
+  const priorCryptoPoint = historyPayload?.stats.previous_date ? { date: historyPayload.stats.previous_date } : undefined
+  const cryptoWeeklyChange = historyPayload?.stats.latest_change || 0
   const cryptoSinceStart = latestCryptoPoint && firstCryptoPoint ? latestCryptoPoint.total - firstCryptoPoint.total : 0
   const cryptoCompositionTotal = latestCryptoPoint
     ? selectedCryptoPlatform === 'all' ? latestCryptoPoint.total : latestCryptoPoint.platforms.get(selectedCryptoPlatform) || 0
@@ -1117,7 +1051,7 @@ function Dashboard({ session }: { session: Session }) {
         <div className={`page-content ${view === 'overview' ? 'overview-page' : ''}`}>
           {view !== 'overview' && <div className="page-heading">
             <div><p className="eyebrow">{view.toUpperCase()}</p><h1>{view === 'crypto' ? 'Crypto value history' : view === 'losses' ? 'Loss history' : view === 'holdings' ? 'All holdings' : 'Portfolio activity'}</h1></div>
-            <div className="heading-actions"><button className="secondary-button" onClick={() => { void load(); if (view === 'crypto') void loadHistory() }} disabled={loading || (view === 'crypto' && historyLoading)}><RefreshCw size={16} className={loading || (view === 'crypto' && historyLoading) ? 'spinning' : ''} />Refresh</button>{view === 'holdings' && <button className="primary-button compact" onClick={() => setShowHoldingForm(true)}><Plus size={17} />Add holding</button>}</div>
+            <div className="heading-actions"><button className="secondary-button" onClick={() => { void load(); if (view === 'crypto') void loadHistory(true) }} disabled={loading || (view === 'crypto' && historyLoading)}><RefreshCw size={16} className={loading || (view === 'crypto' && historyLoading) ? 'spinning' : ''} />Refresh</button>{view === 'holdings' && <button className="primary-button compact" onClick={() => setShowHoldingForm(true)}><Plus size={17} />Add holding</button>}</div>
           </div>}
 
           {error && <div className="error-banner"><ShieldCheck size={18} /><span>{error}</span></div>}
@@ -1224,13 +1158,13 @@ function Dashboard({ session }: { session: Session }) {
 
           {view === 'crypto' && (
             <section className="crypto-history-page">
-              {historyError && <div className="error-banner"><ShieldCheck size={18} /><span>{historyError}</span><button className="secondary-button" onClick={() => void loadHistory()} disabled={historyLoading}>Retry history</button></div>}
-              {historyLoading && <p role="status">Loading wallet history… {historyProgress.toLocaleString()} records received</p>}
+              {historyError && <div className="error-banner"><ShieldCheck size={18} /><span>{historyError}</span><button className="secondary-button" onClick={() => void loadHistory(true)} disabled={historyLoading}>Retry history</button></div>}
+              {historyLoading && <p role="status">Loading chart… up to 200 points</p>}
               <div className="history-kpis">
                 <article><span>Current digital wealth</span><strong>{formatMoney(currentDigitalValue)}</strong><small>Crypto, stablecoins, NFTs and tokenized gold</small></article>
                 <article><span>Latest weekly change</span><strong className={cryptoWeeklyChange >= 0 ? 'value-positive' : 'value-negative'}>{cryptoWeeklyChange >= 0 ? '+' : ''}{formatMoney(cryptoWeeklyChange)}</strong><small>{priorCryptoPoint ? `Since ${new Date(`${priorCryptoPoint.date}T00:00:00`).toLocaleDateString()}` : 'A second weekly snapshot is required'}</small></article>
                 <article><span>Since tracking began</span><strong className={cryptoSinceStart >= 0 ? 'value-positive' : 'value-negative'}>{cryptoSinceStart >= 0 ? '+' : ''}{formatMoney(cryptoSinceStart)}</strong><small>{firstCryptoPoint ? `From ${new Date(`${firstCryptoPoint.date}T00:00:00`).toLocaleDateString()}` : 'Historical backfill pending'}</small></article>
-                <article><span>History coverage</span><strong>{cryptoHistory.length} weeks</strong><small>{firstCryptoPoint && latestCryptoPoint ? `${firstCryptoPoint.date} → ${latestCryptoPoint.date}` : 'No snapshots available'}</small></article>
+                <article><span>History coverage</span><strong>{historyPayload?.stats.week_count || 0} weeks</strong><small>{firstCryptoPoint && latestCryptoPoint ? `${firstCryptoPoint.date} → ${latestCryptoPoint.date}` : 'No snapshots available'}</small></article>
               </div>
 
               <div className="history-grid">
