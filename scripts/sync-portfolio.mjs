@@ -151,14 +151,14 @@ async function loadFx() {
   return rates;
 }
 
-async function loadRabby(addresses) {
+async function loadRabby(addresses, chainFilter = null) {
   const positions = [];
   const owned = new Set(addresses.map((address) => address.toLowerCase()));
   const headers = { "X-Client": "Rabby", "X-Version": "0.9.69" };
   for (let walletIndex = 0; walletIndex < addresses.length; walletIndex += 1) {
     if (walletIndex) await new Promise((resolve) => setTimeout(resolve, 1400));
     const data = await fetchJsonWithRetry(`https://api.rabby.io/v1/user/total_balance?id=${encodeURIComponent(addresses[walletIndex])}&is_core=true`, { headers });
-    const chains = (data.chain_list ?? []).filter((chain) => number(chain.usd_value) >= 0.01);
+    const chains = (data.chain_list ?? []).filter((chain) => number(chain.usd_value) >= 0.01 && (!chainFilter || chainFilter.has(String(chain.id))));
     for (const chain of chains) {
       const chainId = String(chain.id ?? chain.community_id ?? "unknown");
       const chainName = chain.name || chainId;
@@ -471,7 +471,75 @@ async function loadWatchedTokens(addresses, watchConfig) {
 function mergeOneInchWithFallback(oneInchPositions, fallbackPositions) {
   const identity = (position) => `${position.metadata?.wallet_address || ""}|${position.metadata?.chain_id || position.asset.network || ""}|${String(position.metadata?.contract_address || position.asset.contract_address || "native").toLowerCase()}`;
   const covered = new Set(oneInchPositions.map(identity));
-  return [...oneInchPositions, ...fallbackPositions.filter((position) => !covered.has(identity(position)))];
+  const combined = [...oneInchPositions];
+  for (const position of fallbackPositions) {
+    const key = identity(position);
+    if (covered.has(key)) continue;
+    covered.add(key);
+    combined.push(position);
+  }
+  return combined;
+}
+
+async function loadPlasmaRpc(addresses) {
+  const rpc = async (method, params) => {
+    await new Promise((resolve) => setTimeout(resolve, 140));
+    const result = await fetchJsonWithRetry("https://rpc.plasma.to", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }), signal: AbortSignal.timeout(30000) });
+    if (result.error || result.result == null) throw new Error(`Plasma RPC ${method} failed`);
+    return result.result;
+  };
+  if (Number.parseInt(await rpc("eth_chainId", []), 16) !== 9745) throw new Error("Unexpected Plasma RPC chain");
+  const block = await rpc("eth_blockNumber", []);
+  const prices = new Map((await fetchJson("https://api.binance.com/api/v3/ticker/price")).map((r) => [r.symbol, number(r.price)]));
+  const weth = "0x9895d81bb462a195b4922ed7de0e3acd007c32cb";
+  const usdt = "0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb";
+  // Token/receipt contracts verified against Rabby's historical wallet records.
+  const tokens = [
+    { symbol: "XPL", contract: "native", decimals: 18, pair: "XPLUSDT" },
+    { symbol: "WXPL", contract: "0x6100e367285b01f48d07953803a2d8dca5d19873", decimals: 18, pair: "XPLUSDT" },
+    { symbol: "WETH", contract: weth, decimals: 18, pair: "ETHUSDT" },
+    { symbol: "USDT0", contract: usdt, decimals: 6, stable: true },
+    { symbol: "FUSDT0", contract: "0x1dd4b13fcae900c60a350589be8052959d2ed27b", decimals: 6, receipt: true },
+    { symbol: "FWETH", contract: "0x5e494e8912319cefb1d4fa516807bb65a8cb9e40", decimals: 18, receipt: true },
+    { symbol: "USDT0-V3", contract: "0x53e4e9b8766969c43895839cc9c673bb6bc8ac97", decimals: 6, receipt: true },
+    { symbol: "DUSDT0-V3-0", contract: "0x76309a9a56309104518847bba321c261b7b4a43f", decimals: 6, receipt: true },
+    { symbol: "FLUID", contract: "0x61e030a56d33e8260fdd81f03b162a79fe3449cd", decimals: 18, fluid: true },
+  ];
+  const positions = [];
+  for (const address of addresses) for (const token of tokens) {
+    const raw = token.contract === "native" ? await rpc("eth_getBalance", [address, block]) : await rpc("eth_call", [{ to: token.contract, data: `0x70a08231${address.slice(2).toLowerCase().padStart(64, "0")}` }, block]);
+    const balance = BigInt(raw === "0x" ? "0x0" : raw);
+    if (!balance) continue;
+    const quantity = Number(balance) / 10 ** token.decimals;
+    let value;
+    let stable = Boolean(token.stable);
+    if (token.receipt) {
+      const underlying = `0x${(await rpc("eth_call", [{ to: token.contract, data: "0x38d52e0f" }, block])).slice(-40)}`.toLowerCase();
+      const rawAssets = await rpc("eth_call", [{ to: token.contract, data: `0x07a2d13a${balance.toString(16).padStart(64, "0")}` }, block]);
+      const decimals = Number.parseInt(await rpc("eth_call", [{ to: underlying, data: "0x313ce567" }, block]), 16);
+      const amount = Number(BigInt(rawAssets)) / 10 ** decimals;
+      stable = underlying === usdt;
+      if (stable) value = amount;
+      else if (underlying === weth) value = amount * prices.get("ETHUSDT");
+      else throw new Error(`Unsupported Plasma receipt underlying for ${token.symbol}`);
+    } else if (token.fluid) {
+      const result = await fetchJson("https://coins.llama.fi/prices/current/coingecko:instadapp");
+      const mark = result.coins?.["coingecko:instadapp"];
+      if (!mark || number(mark.confidence) < .99 || Math.abs(Date.now() / 1000 - number(mark.timestamp)) > 86400) throw new Error("Plasma FLUID price unavailable");
+      value = quantity * number(mark.price);
+    } else value = quantity * (stable ? 1 : prices.get(token.pair));
+    if (!Number.isFinite(value)) throw new Error(`Plasma ${token.symbol} price unavailable`);
+    if (value < .01) continue;
+    const contract = token.contract === "native" ? "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" : token.contract;
+    positions.push({
+      account: { name: `Wallet · ${address} · Plasma`, institution: "Plasma RPC", account_type: "wallet", currency: "USD", source: "oneinch" },
+      asset: { symbol: token.symbol, name: token.symbol, asset_class: stable ? "stablecoin" : "crypto", currency: "USD", network: "Plasma", contract_address: contract, metadata: { chain_id: 9745, provider: "Plasma RPC" } },
+      quantity, price_usd: value / quantity, value_usd: round(value),
+      source_key: `oneinch:${hash(address.toLowerCase())}:9745:rpc:${hash(contract)}`,
+      metadata: { wallet_address: address.toLowerCase(), wallet_hash: hash(address.toLowerCase()), chain_id: 9745, contract_address: contract, provider: "Plasma RPC (Rabby-verified tokens)", block_number: Number.parseInt(block, 16), balance_type: token.receipt ? "protocol_position" : "wallet_token", pricing_source: "Binance spot; USDT0 USD parity; DefiLlama FLUID", coverage_scope: "Verified Plasma tokens/receipts; unsupported assets require discovery" },
+    });
+  }
+  return positions;
 }
 
 async function hyperliquidInfo(body) {
@@ -966,7 +1034,26 @@ if (shouldRun("oneinch")) {
       || serverCredentials.PORTFOLIO_WATCH_TOKENS_JSON?.trim()
       || (defaultWatchFile ? await fs.readFile(defaultWatchFile, "utf8").catch(() => "") : "");
     const fallbackPositions = await loadWatchedTokens(addresses, watchConfig);
-    return mergeOneInchWithFallback(oneInchPositions, fallbackPositions);
+    // Plasma is not currently indexed by the main provider. Keep its live
+    // wallet tokens and DeFi value in the same authoritative wallet refresh.
+    const providerHasPlasma = oneInchPositions.some((position) => number(position.metadata?.chain_id) === 9745);
+    let plasmaPositions = [];
+    if (!providerHasPlasma) {
+      if (args.has("--plasma-rpc")) return mergeOneInchWithFallback(oneInchPositions, [...fallbackPositions, ...await loadPlasmaRpc(addresses)]);
+      try { plasmaPositions = await loadRabby(addresses, new Set(["plasma"])); }
+      catch { return mergeOneInchWithFallback(oneInchPositions, [...fallbackPositions, ...await loadPlasmaRpc(addresses)]); }
+    }
+    const plasmaFallback = plasmaPositions.map((position) => {
+      const contract = position.asset.contract_address === "plasma" ? "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" : position.asset.contract_address;
+      return {
+        ...position,
+        account: { ...position.account, source: "oneinch" },
+        asset: { ...position.asset, network: "Plasma", contract_address: contract },
+        source_key: `oneinch:${position.metadata.wallet_hash}:9745:rabby:${hash(contract || "defi")}`,
+        metadata: { ...position.metadata, chain_id: 9745, contract_address: contract || "native", provider: "Rabby Plasma fallback" },
+      };
+    });
+    return mergeOneInchWithFallback(oneInchPositions, [...fallbackPositions, ...plasmaFallback]);
   });
   if (result) sourcePositions.oneinch = result;
 }

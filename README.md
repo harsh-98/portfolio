@@ -49,7 +49,7 @@ Set Pages source to **GitHub Actions**. Pushing to `main` builds and deploys the
 
 ## Data imports and snapshots
 
-The local sync adapter reads live FX (Frankfurter), Rabby wallet balances, Binance, Wio CSV exports, and XTB XLSX/ZIP exports. It writes current positions, one position-level snapshot per day, XTB transaction history, and an audit row for each source. It never writes credentials to the database.
+The local sync adapter reads live FX (Frankfurter), Rabby wallet balances, Binance, Wio CSV exports, and XTB XLSX/ZIP exports. It writes current positions, one position-level snapshot per day, XTB transaction history, and an audit row for each source. It never writes credentials to the database. Current wallet refreshes also supplement Plasma when the main indexer omits it: Rabby is preferred, with a paced public-RPC fallback covering the verified Plasma token/receipt set. `--plasma-rpc` selects the direct fallback when Rabby is rate-limited. Vault shares use on-chain redemption values; the fallback's coverage is recorded in position metadata.
 
 Run a read-only reconciliation first:
 
