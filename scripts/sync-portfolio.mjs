@@ -1148,23 +1148,28 @@ async function ensureAsset(asset) {
 async function replaceSource(source, positions) {
   const [run] = await supabase("/rest/v1/sync_runs", { method: "POST", body: { owner_id: ownerId, source, status: "running", records_seen: positions.length }, prefer: "return=representation" });
   try {
-    const existingQuery = new URLSearchParams({ owner_id: `eq.${ownerId}`, source_key: `like.${source}:%`, select: "id,source_key,cost_basis_usd" });
+    const existingQuery = new URLSearchParams({ owner_id: `eq.${ownerId}`, source_key: `like.${source}:%`, select: "id,source_key,cost_basis_usd,metadata" });
     const existing = await supabase(`/rest/v1/positions?${existingQuery}`);
     const existingBySourceKey = new Map(existing.map((position) => [position.source_key, position]));
     const rows = [];
     for (const position of positions) {
-      const retainedCostBasis = existingBySourceKey.get(position.source_key)?.cost_basis_usd ?? null;
+      const previous = existingBySourceKey.get(position.source_key);
+      const retainedCostBasis = previous?.cost_basis_usd ?? null;
+      const override = source === "wio" ? previous?.metadata?.balance_override : null;
+      const overrideTime = Date.parse(override?.effective_at || "");
+      const incomingTime = Date.parse(position.as_of || now);
+      const keepOverride = override?.quantity != null && Number.isFinite(Number(override.quantity)) && Number.isFinite(overrideTime) && incomingTime <= overrideTime;
       rows.push({
         owner_id: ownerId,
         account_id: await ensureAccount(position.account),
         asset_id: await ensureAsset(position.asset),
-        quantity: position.quantity,
+        quantity: keepOverride ? Number(override.quantity) : position.quantity,
         price_usd: position.price_usd,
-        value_usd: position.value_usd,
+        value_usd: keepOverride ? round(Number(override.quantity) * position.price_usd) : position.value_usd,
         cost_basis_usd: position.cost_basis_usd ?? retainedCostBasis,
         source_key: position.source_key,
-        as_of: position.as_of ?? now,
-        metadata: position.metadata ?? {},
+        as_of: keepOverride ? override.effective_at : position.as_of ?? now,
+        metadata: keepOverride ? { ...position.metadata, balance_override: override } : position.metadata ?? {},
       });
     }
     if (rows.length) await supabase("/rest/v1/positions?on_conflict=owner_id,source_key", { method: "POST", body: rows, prefer: "resolution=merge-duplicates,return=minimal" });
