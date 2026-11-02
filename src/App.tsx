@@ -135,7 +135,7 @@ function formatAmount(value: number) {
   return new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(value)
 }
 
-async function fetchAllPositionSnapshots() {
+async function fetchAllPositionSnapshots(signal: AbortSignal, onProgress: (rows: number) => void) {
   const pageSize = 1000
   const rows: PositionSnapshot[] = []
   for (let from = 0; ; from += pageSize) {
@@ -145,8 +145,10 @@ async function fetchAllPositionSnapshots() {
       .order('snapshot_date', { ascending: true })
       .order('source_key', { ascending: true })
       .range(from, from + pageSize - 1)
+      .abortSignal(signal)
     if (result.error) return { data: rows, error: result.error }
     rows.push(...((result.data || []) as unknown as PositionSnapshot[]))
+    onProgress(rows.length)
     if ((result.data || []).length < pageSize) return { data: rows, error: null }
   }
 }
@@ -504,6 +506,12 @@ function Dashboard({ session }: { session: Session }) {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [positionSnapshots, setPositionSnapshots] = useState<PositionSnapshot[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [historyProgress, setHistoryProgress] = useState(0)
+  const historyLoadedRef = useRef(false)
+  const historyAbortRef = useRef<AbortController | null>(null)
+  const loadAbortRef = useRef<AbortController | null>(null)
   const [syncRuns, setSyncRuns] = useState<SyncRun[]>([])
   const [brokerageTransactions, setBrokerageTransactions] = useState<BrokerageTransaction[]>([])
   const [spendTransactions, setSpendTransactions] = useState<SpendTransaction[]>([])
@@ -556,32 +564,97 @@ function Dashboard({ session }: { session: Session }) {
   useEffect(() => { localStorage.setItem('northstar-currency', displayCurrency) }, [displayCurrency])
 
   const load = useCallback(async () => {
+    loadAbortRef.current?.abort()
+    const controller = new AbortController()
+    loadAbortRef.current = controller
     setLoading(true)
     setError('')
-    const [positionsResult, accountsResult, snapshotsResult, positionSnapshotsResult, syncRunsResult, brokerageResult, spendResult, lossEventsResult] = await Promise.all([
-      supabase.from('positions').select('*, account:accounts(*), asset:assets(*)').order('value_usd', { ascending: false }),
-      supabase.from('accounts').select('*').order('name'),
-      supabase.from('portfolio_snapshots').select('*').order('snapshot_date', { ascending: true }).limit(90),
-      fetchAllPositionSnapshots(),
-      supabase.from('sync_runs').select('id,source,status,records_written,message,started_at,finished_at').order('started_at', { ascending: false }).limit(20),
-      supabase.from('brokerage_transactions').select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,account:accounts(name,institution),asset:assets(symbol,name)').order('event_time', { ascending: false }).limit(1000),
-      supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status,transaction_type,metadata').order('occurred_at', { ascending: false }).limit(5000),
-      supabase.from('loss_events').select('id,event_key,event_at,date_precision,title,category,status,loss_low_usd,loss_high_usd,details').order('event_at', { ascending: false, nullsFirst: false }),
-    ])
-    const failure = positionsResult.error || accountsResult.error || snapshotsResult.error || positionSnapshotsResult.error || syncRunsResult.error || brokerageResult.error || spendResult.error || lossEventsResult.error
-    if (failure) setError(failure.message)
-    setPositions((positionsResult.data || []) as unknown as Position[])
-    setAccounts((accountsResult.data || []) as Account[])
-    setSnapshots((snapshotsResult.data || []) as Snapshot[])
-    setPositionSnapshots(positionSnapshotsResult.data || [])
-    setSyncRuns((syncRunsResult.data || []) as SyncRun[])
-    setBrokerageTransactions((brokerageResult.data || []) as unknown as BrokerageTransaction[])
-    setSpendTransactions((spendResult.data || []) as SpendTransaction[])
-    setLossEvents((lossEventsResult.data || []) as LossEvent[])
-    setLoading(false)
+    const timeout = window.setTimeout(() => {
+      if (loadAbortRef.current !== controller) return
+      setError('Loading took too long. Please refresh to try again.')
+      setLoading(false)
+      controller.abort()
+    }, 30000)
+    try {
+      const [positionsResult, accountsResult, snapshotsResult, syncRunsResult, brokerageResult, spendResult, lossEventsResult] = await Promise.all([
+        supabase.from('positions').select('*, account:accounts(*), asset:assets(*)').order('value_usd', { ascending: false }).abortSignal(controller.signal).then((result) => {
+          if (!controller.signal.aborted) {
+            if (result.error) setError(result.error.message)
+            else setPositions((result.data || []) as unknown as Position[])
+            setLoading(false)
+          }
+          return result
+        }),
+        supabase.from('accounts').select('*').order('name').abortSignal(controller.signal),
+        supabase.from('portfolio_snapshots').select('*').order('snapshot_date', { ascending: true }).limit(90).abortSignal(controller.signal),
+        supabase.from('sync_runs').select('id,source,status,records_written,message,started_at,finished_at').order('started_at', { ascending: false }).limit(20).abortSignal(controller.signal),
+        supabase.from('brokerage_transactions').select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,account:accounts(name,institution),asset:assets(symbol,name)').order('event_time', { ascending: false }).limit(1000).abortSignal(controller.signal),
+        supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status,transaction_type,metadata').order('occurred_at', { ascending: false }).limit(5000).abortSignal(controller.signal),
+        supabase.from('loss_events').select('id,event_key,event_at,date_precision,title,category,status,loss_low_usd,loss_high_usd,details').order('event_at', { ascending: false, nullsFirst: false }).abortSignal(controller.signal),
+      ])
+      if (controller.signal.aborted) return
+      const failure = positionsResult.error || accountsResult.error || snapshotsResult.error || syncRunsResult.error || brokerageResult.error || spendResult.error || lossEventsResult.error
+      if (failure) setError(failure.message)
+      setAccounts((accountsResult.data || []) as Account[])
+      setSnapshots((snapshotsResult.data || []) as Snapshot[])
+      setSyncRuns((syncRunsResult.data || []) as SyncRun[])
+      setBrokerageTransactions((brokerageResult.data || []) as unknown as BrokerageTransaction[])
+      setSpendTransactions((spendResult.data || []) as SpendTransaction[])
+      setLossEvents((lossEventsResult.data || []) as LossEvent[])
+    } catch (failure) {
+      if (!controller.signal.aborted) setError(failure instanceof Error ? failure.message : 'Unable to load portfolio. Please refresh to try again.')
+    } finally {
+      window.clearTimeout(timeout)
+      if (loadAbortRef.current === controller) {
+        loadAbortRef.current = null
+        setLoading(false)
+      }
+    }
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  const loadHistory = useCallback(async () => {
+    historyAbortRef.current?.abort()
+    const controller = new AbortController()
+    historyAbortRef.current = controller
+    setHistoryLoading(true)
+    setHistoryError('')
+    setHistoryProgress(0)
+    const timeout = window.setTimeout(() => {
+      if (historyAbortRef.current !== controller) return
+      setHistoryError('History loading took too long. Please retry.')
+      setHistoryLoading(false)
+      controller.abort()
+    }, 120000)
+    try {
+      const result = await fetchAllPositionSnapshots(controller.signal, setHistoryProgress)
+      if (controller.signal.aborted) return
+      if (result.error) setHistoryError(result.error.message)
+      else {
+        setPositionSnapshots(result.data)
+        historyLoadedRef.current = true
+      }
+    } catch (failure) {
+      if (!controller.signal.aborted) setHistoryError(failure instanceof Error ? failure.message : 'Unable to load wallet history.')
+    } finally {
+      window.clearTimeout(timeout)
+      if (historyAbortRef.current === controller) {
+        historyAbortRef.current = null
+        setHistoryLoading(false)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+    return () => loadAbortRef.current?.abort()
+  }, [load])
+  useEffect(() => {
+    if (view === 'crypto' && !historyLoadedRef.current) void loadHistory()
+    return () => {
+      historyAbortRef.current?.abort()
+      setHistoryLoading(false)
+    }
+  }, [view, loadHistory])
   useEffect(() => { positionsRef.current = positions }, [positions])
 
   const refreshLiveCryptoPrices = useCallback(async () => {
@@ -1044,7 +1117,7 @@ function Dashboard({ session }: { session: Session }) {
         <div className={`page-content ${view === 'overview' ? 'overview-page' : ''}`}>
           {view !== 'overview' && <div className="page-heading">
             <div><p className="eyebrow">{view.toUpperCase()}</p><h1>{view === 'crypto' ? 'Crypto value history' : view === 'losses' ? 'Loss history' : view === 'holdings' ? 'All holdings' : 'Portfolio activity'}</h1></div>
-            <div className="heading-actions"><button className="secondary-button" onClick={() => void load()} disabled={loading}><RefreshCw size={16} className={loading ? 'spinning' : ''} />Refresh</button>{view === 'holdings' && <button className="primary-button compact" onClick={() => setShowHoldingForm(true)}><Plus size={17} />Add holding</button>}</div>
+            <div className="heading-actions"><button className="secondary-button" onClick={() => { void load(); if (view === 'crypto') void loadHistory() }} disabled={loading || (view === 'crypto' && historyLoading)}><RefreshCw size={16} className={loading || (view === 'crypto' && historyLoading) ? 'spinning' : ''} />Refresh</button>{view === 'holdings' && <button className="primary-button compact" onClick={() => setShowHoldingForm(true)}><Plus size={17} />Add holding</button>}</div>
           </div>}
 
           {error && <div className="error-banner"><ShieldCheck size={18} /><span>{error}</span></div>}
@@ -1151,6 +1224,8 @@ function Dashboard({ session }: { session: Session }) {
 
           {view === 'crypto' && (
             <section className="crypto-history-page">
+              {historyError && <div className="error-banner"><ShieldCheck size={18} /><span>{historyError}</span><button className="secondary-button" onClick={() => void loadHistory()} disabled={historyLoading}>Retry history</button></div>}
+              {historyLoading && <p role="status">Loading wallet history… {historyProgress.toLocaleString()} records received</p>}
               <div className="history-kpis">
                 <article><span>Current digital wealth</span><strong>{formatMoney(currentDigitalValue)}</strong><small>Crypto, stablecoins, NFTs and tokenized gold</small></article>
                 <article><span>Latest weekly change</span><strong className={cryptoWeeklyChange >= 0 ? 'value-positive' : 'value-negative'}>{cryptoWeeklyChange >= 0 ? '+' : ''}{formatMoney(cryptoWeeklyChange)}</strong><small>{priorCryptoPoint ? `Since ${new Date(`${priorCryptoPoint.date}T00:00:00`).toLocaleDateString()}` : 'A second weekly snapshot is required'}</small></article>
@@ -1161,7 +1236,7 @@ function Dashboard({ session }: { session: Session }) {
               <div className="history-grid">
                 <article className="panel history-chart-panel">
                   <div className="panel-heading"><div><p className="eyebrow">WEEKLY ADDRESS SNAPSHOTS</p><h2>Crypto wealth over time</h2></div><div className="history-chart-actions"><span>{latestRangeCryptoPoint ? `${formatMoney(latestRangeCryptoPoint.total)} · ${chartCryptoHistory.length} points` : 'Pending'}</span><div className="history-filter-row"><label>Address / platform<select value={selectedCryptoPlatform} onChange={(event) => setSelectedCryptoPlatform(event.target.value)}><option value="all">All addresses / platforms</option>{cryptoPlatforms.map((platform) => <option key={platform} value={platform}>{platform}</option>)}</select></label><div className="range-toggle" aria-label="Crypto chart range">{cryptoRanges.map((range) => <button key={range} className={cryptoRange === range ? 'active' : ''} onClick={() => setCryptoRange(range)}>{range}</button>)}</div></div></div></div>
-                  {chartCryptoHistory.length ? <div className="history-chart"><div className="history-chart-scroll"><div className="history-chart-canvas"><ResponsiveContainer width="100%" height="100%"><AreaChart data={cryptoChartData} margin={{ top: 8, right: 12, left: 8, bottom: 4 }}><defs><linearGradient id="cryptoArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#68d3a0" stopOpacity={0.32} /><stop offset="1" stopColor="#68d3a0" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="#1e252b" vertical={false} /><XAxis dataKey="date" minTickGap={42} tick={{ fill: '#5d6971', fontSize: 8 }} tickLine={false} axisLine={false} /><YAxis width={58} domain={['auto', 'auto']} tickFormatter={(value) => formatCompactMoney(Number(value))} tick={{ fill: '#5d6971', fontSize: 8 }} tickLine={false} axisLine={false} /><Tooltip formatter={(value) => [formatMoney(Number(value)), 'Wealth']} contentStyle={{ background: '#11171c', border: '1px solid #2a333a', borderRadius: 7, fontSize: 10 }} labelStyle={{ color: '#8d999f' }} /><Area type="monotone" dataKey="value" stroke="#68d3a0" strokeWidth={2} fill="url(#cryptoArea)" dot={false} activeDot={{ r: 4, fill: '#0d1216', stroke: '#68d3a0' }} /><Brush dataKey="date" height={24} travellerWidth={8} stroke="#315b47" fill="#0d1216" tickFormatter={(date) => String(date).slice(0, 7)} /></AreaChart></ResponsiveContainer></div></div></div> : <div className="history-empty"><Coins size={24} /><strong>Historical backfill not loaded yet</strong><p>The first observed snapshot is available after a successful sync. Reconstructed weekly history from 2018 requires an indexed historical-balance API.</p></div>}
+                  {chartCryptoHistory.length ? <div className="history-chart"><div className="history-chart-scroll"><div className="history-chart-canvas"><ResponsiveContainer width="100%" height="100%"><AreaChart data={cryptoChartData} margin={{ top: 8, right: 12, left: 8, bottom: 4 }}><defs><linearGradient id="cryptoArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#68d3a0" stopOpacity={0.32} /><stop offset="1" stopColor="#68d3a0" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="#1e252b" vertical={false} /><XAxis dataKey="date" minTickGap={42} tick={{ fill: '#5d6971', fontSize: 8 }} tickLine={false} axisLine={false} /><YAxis width={58} domain={['auto', 'auto']} tickFormatter={(value) => formatCompactMoney(Number(value))} tick={{ fill: '#5d6971', fontSize: 8 }} tickLine={false} axisLine={false} /><Tooltip formatter={(value) => [formatMoney(Number(value)), 'Wealth']} contentStyle={{ background: '#11171c', border: '1px solid #2a333a', borderRadius: 7, fontSize: 10 }} labelStyle={{ color: '#8d999f' }} /><Area type="monotone" dataKey="value" stroke="#68d3a0" strokeWidth={2} fill="url(#cryptoArea)" dot={false} activeDot={{ r: 4, fill: '#0d1216', stroke: '#68d3a0' }} /><Brush dataKey="date" height={24} travellerWidth={8} stroke="#315b47" fill="#0d1216" tickFormatter={(date) => String(date).slice(0, 7)} /></AreaChart></ResponsiveContainer></div></div></div> : <div className="history-empty"><Coins size={24} /><strong>{historyLoading ? 'Loading wallet history…' : historyError ? 'History could not be loaded' : 'No wallet history available'}</strong><p>{historyLoading ? 'Current balances are available while the historical chart loads.' : historyError ? 'Use Retry history to load the chart again.' : 'Historical snapshots will appear here after a successful import.'}</p></div>}
                 </article>
 
                 <article className="panel history-address-panel">
