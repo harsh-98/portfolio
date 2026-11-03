@@ -674,3 +674,8 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .asset-price-sections { display: grid; gap: 12px; }
 .asset-price-sections h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; color: #a9c8b7; font: 700 10px 'DM Mono', monospace; }
 .asset-price-sections h3 small { color: #738088; font: 8px 'DM Mono', monospace; }
+
+.stock-price-status { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 0 0 6px; color: #82968b; font-size: 8px; line-height: 1.4; }
+.stock-price-status span { min-width: 0; }
+.stock-price-status.delayed { color: #d7ad77; }
+.stock-price-status button { flex-shrink: 0; border: 0; background: transparent; padding: 3px 0 3px 4px; color: #8ed0ab; font-size: 8px; cursor: pointer; }

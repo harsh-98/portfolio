@@ -27,6 +27,7 @@ import {
   X,
 } from 'lucide-react'
 import { isConfigured, supabase } from './lib/supabase'
+import { fetchStockPrices } from './lib/stock-prices'
 import type { Account, AssetClass, BrokerageTransaction, LossEvent, Position, Snapshot, SpendTransaction, SyncRun } from './types'
 
 ModuleRegistry.registerModules([AllCommunityModule])
@@ -639,6 +640,9 @@ function Dashboard({ session }: { session: Session }) {
   const [lastLivePriceAt, setLastLivePriceAt] = useState<Date | null>(null)
   const [livePriceDelayed, setLivePriceDelayed] = useState(false)
   const [lastStockPriceAt, setLastStockPriceAt] = useState<Date | null>(null)
+  const [stockPriceError, setStockPriceError] = useState('')
+  const stockQuoteAbortRef = useRef<AbortController | null>(null)
+  const [positionLoadVersion, setPositionLoadVersion] = useState(0)
   const [showPrices, setShowPrices] = useState(false)
   const [priceSearch, setPriceSearch] = useState('')
   const [priceRefreshBusy, setPriceRefreshBusy] = useState(false)
@@ -695,7 +699,12 @@ function Dashboard({ session }: { session: Session }) {
         supabase.from('positions').select('*, account:accounts(*), asset:assets(*)').order('value_usd', { ascending: false }).abortSignal(controller.signal).then((result) => {
           if (!controller.signal.aborted) {
             if (result.error) setError(result.error.message)
-            else setPositions((result.data || []) as unknown as Position[])
+            else {
+              const loadedPositions = (result.data || []) as unknown as Position[]
+              positionsRef.current = loadedPositions
+              setPositions(loadedPositions)
+              setPositionLoadVersion((version) => version + 1)
+            }
             setLoading(false)
           }
           return result
@@ -870,36 +879,58 @@ function Dashboard({ session }: { session: Session }) {
   }, [refreshLiveCryptoPrices])
 
   const refreshStockPrices = useCallback(async () => {
+    if (stockQuoteAbortRef.current) return
     const symbols = [...new Set(positionsRef.current
       .filter((position) => position.asset.asset_class === 'equity')
       .map((position) => canonicalEquitySymbol(position.asset.symbol)))]
     if (!symbols.length) return
-    const { data, error: quoteError } = await supabase.functions.invoke('market-prices', { body: { symbols } })
-    if (quoteError || !data?.prices) {
+    const controller = new AbortController()
+    stockQuoteAbortRef.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 20000)
+    try {
+      const { prices, source } = await fetchStockPrices(symbols, controller.signal)
+      if (stockQuoteAbortRef.current !== controller) return
+      const fetchedAt = new Date().toISOString()
+      setPositions((current) => current.map((position) => {
+        if (position.asset.asset_class !== 'equity') return position
+        const symbol = canonicalEquitySymbol(position.asset.symbol)
+        const price = prices.get(symbol)
+        if (price == null) return position
+        return { ...position, price_usd: price, value_usd: Math.round(Number(position.quantity) * price * 100) / 100, metadata: { ...position.metadata, market_quote: { source, kind: 'Live quote', quote_symbol: symbol, fetched_at: fetchedAt } } }
+      }))
+      const missing = symbols.filter((symbol) => !prices.has(symbol))
+      setLastStockPriceAt(new Date(fetchedAt))
+      setStockPriceDelayed(missing.length > 0)
+      setStockPriceError(missing.length ? `No quote for ${missing.join(', ')}. Other stocks updated.` : '')
+    } catch (failure) {
+      if (stockQuoteAbortRef.current !== controller) return
       setStockPriceDelayed(true)
-      return
+      setStockPriceError(controller.signal.aborted ? 'Stock quote request timed out. Tap Retry.' : failure instanceof Error ? failure.message : 'Could not reach the stock price feed.')
+    } finally {
+      window.clearTimeout(timeout)
+      if (stockQuoteAbortRef.current === controller) stockQuoteAbortRef.current = null
     }
-    const prices = new Map<string, number>(Object.entries(data.prices).map(([symbol, price]) => [symbol.toUpperCase(), Number(price)]))
-    const fetchedAt = new Date(data.as_of || Date.now()).toISOString()
-    setPositions((current) => current.map((position) => {
-      if (position.asset.asset_class !== 'equity') return position
-      const price = prices.get(canonicalEquitySymbol(position.asset.symbol))
-      if (!price || !Number.isFinite(price)) return position
-      return { ...position, price_usd: price, value_usd: Math.round(Number(position.quantity) * price * 100) / 100, metadata: { ...position.metadata, market_quote: { source: String(data.source || data.provider || 'Stock market feed'), kind: 'Live quote', quote_symbol: canonicalEquitySymbol(position.asset.symbol), fetched_at: fetchedAt } } }
-    }))
-    setLastStockPriceAt(new Date(data.as_of || Date.now()))
-    setStockPriceDelayed(false)
   }, [])
 
   useEffect(() => {
-    if (positions.length && !lastStockPriceAt) void refreshStockPrices()
-  }, [lastStockPriceAt, positions.length, refreshStockPrices])
+    if (positionLoadVersion) void refreshStockPrices()
+  }, [positionLoadVersion, refreshStockPrices])
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void refreshStockPrices()
-    }, 60000)
-    return () => window.clearInterval(timer)
+    const resume = () => { if (document.visibilityState === 'visible') void refreshStockPrices() }
+    const timer = window.setInterval(resume, 60000)
+    document.addEventListener('visibilitychange', resume)
+    window.addEventListener('focus', resume)
+    window.addEventListener('online', resume)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', resume)
+      window.removeEventListener('focus', resume)
+      window.removeEventListener('online', resume)
+      const controller = stockQuoteAbortRef.current
+      stockQuoteAbortRef.current = null
+      controller?.abort()
+    }
   }, [refreshStockPrices])
 
   const assetPriceRows = useMemo(() => {
@@ -1288,8 +1319,8 @@ function Dashboard({ session }: { session: Session }) {
       <dialog ref={priceDialogRef} className="asset-prices-dialog compact-prices-dialog" aria-labelledby="asset-prices-title" onClose={() => setShowPrices(false)} onClick={(event) => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) setShowPrices(false) } }}>
         <div className="asset-prices-header"><div><h2 id="asset-prices-title">Prices <small>USD</small></h2></div><button className="asset-prices-close" aria-label="Close asset prices" onClick={() => setShowPrices(false)} autoFocus><X size={18} /></button></div>
         <div className="asset-prices-tools"><input type="search" aria-label="Search asset prices" placeholder="Search symbol" value={priceSearch} onChange={(event) => setPriceSearch(event.target.value)} /><button className="secondary-button" onClick={() => void refreshDisplayedPrices()} disabled={priceRefreshBusy}><RefreshCw size={13} className={priceRefreshBusy ? 'spinning' : ''} />Refresh</button></div>
-        {(livePriceDelayed || stockPriceDelayed) && <p className="asset-prices-note" role="status">{livePriceDelayed ? 'Crypto feed delayed. ' : ''}{stockPriceDelayed ? 'Stock feed delayed. ' : ''}Last available prices remain below.</p>}
-        <div className="asset-price-sections">{assetPriceSections.map((section) => <section key={section.category} aria-label={`${section.category} prices`}><h3>{section.category}{section.category === 'Options' && <small>USD / contract</small>}</h3><div className="asset-prices-list">{section.rows.map((row) => <article key={row.id} className="asset-price-row"><strong>{row.symbol}</strong><b>{formatUnitPrice(row.price)}</b></article>)}</div></section>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
+        {(livePriceDelayed || stockPriceDelayed) && <p className="asset-prices-note" role="status">{livePriceDelayed ? 'Crypto feed delayed. ' : ''}{stockPriceDelayed ? `${stockPriceError || 'Stock feed delayed.'} ` : ''}Last available prices remain below.</p>}
+        <div className="asset-price-sections">{assetPriceSections.map((section) => <section key={section.category} aria-label={`${section.category} prices`}><h3>{section.category}{section.category === 'Options' && <small>USD / contract</small>}{section.category === 'Equities' && <small>{stockPriceDelayed ? 'delayed' : lastStockPriceAt ? `fetched ${lastStockPriceAt.toLocaleTimeString()}` : 'fetching…'}</small>}</h3><div className="asset-prices-list">{section.rows.map((row) => <article key={row.id} className="asset-price-row"><strong>{row.symbol}</strong><b>{formatUnitPrice(row.price)}</b></article>)}</div></section>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
         <p className="asset-prices-note">{assetPriceRows.length} symbols</p>
       </dialog>
 
@@ -1351,6 +1382,7 @@ function Dashboard({ session }: { session: Session }) {
 
                 <article className={overviewPanelClass('equities', 'overview-equities')}>
                   <div className="panel-heading"><div><p className="eyebrow">STOCKS &amp; ETFS</p><h2>{formatMoney(equities)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={stockPnl >= 0 ? 'value-positive' : 'value-negative'}>{stockPnl >= 0 ? '+' : ''}{formatMoney(stockPnl)}</strong></span><span><small>Realized</small><strong className={realizedXtb >= 0 ? 'value-positive' : 'value-negative'}>{realizedXtb >= 0 ? '+' : ''}{formatMoney(realizedXtb)}</strong></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'equities' ? null : 'equities')} aria-label="Expand stocks and ETFs">{expandedPanel === 'equities' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className={`stock-price-status ${stockPriceDelayed ? 'delayed' : ''}`} role="status"><span>{stockPriceError || (lastStockPriceAt ? `Prices fetched ${lastStockPriceAt.toLocaleTimeString()} · refresh every 1m` : 'Fetching stock prices…')}</span><button type="button" onClick={() => void refreshStockPrices()}>{stockPriceDelayed ? 'Retry' : 'Refresh prices'}</button></div>
                   <div className="equity-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={equityGridRows} columnDefs={equityColumns} defaultColDef={{ sortable: true, resizable: true, suppressHeaderFilterButton: compactStocks }} getRowId={({ data }) => data.symbol} rowHeight={34} headerHeight={30} onRowClicked={({ data }) => data && setExpandedEquity(data.symbol)} /></div>
                   <div className="equity-footer"><span>{equityExposure.length} securities · {formatMoney(stockCostBasis)} known cost</span><span>{brokerageTransactions.length ? 'Realized P/L from XTB history' : 'Realized P/L unavailable'}</span></div>
                   {expandedEquity && (() => {
