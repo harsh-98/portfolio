@@ -902,23 +902,23 @@ function Dashboard({ session }: { session: Session }) {
   }, [refreshStockPrices])
 
   const assetPriceRows = useMemo(() => {
-    const grouped = new Map<string, { id: string; symbol: string; name: string; network: string; price: number; source: string; kind: string; fetchedAt: string; quoteSymbol: string; locations: Set<string> }>()
+    const grouped = new Map<string, { id: string; symbol: string; price: number; fetchedAt: number; priority: number }>()
     positions.forEach((position) => {
-      const quote = position.metadata.market_quote as { source?: string; kind?: string; fetched_at?: string; quote_symbol?: string } | undefined
+      const quote = position.metadata.market_quote as { fetched_at?: string } | undefined
       const override = position.metadata.valuation_override as { price_usd?: number; effective_at?: string } | undefined
       const isOverride = typeof override?.price_usd === 'number' && Number.isFinite(override.price_usd) && override.price_usd >= 0
+      const symbol = position.asset.symbol.toUpperCase()
       const price = isOverride ? override.price_usd! : Number(position.price_usd)
-      const kind = isOverride ? 'Owner value' : quote?.kind || 'Saved snapshot'
-      const source = isOverride ? 'Owner valuation' : quote?.source || String(position.metadata.provider || position.metadata.pricing_source || position.account.institution)
-      const fetchedAt = isOverride ? override.effective_at || position.as_of : quote?.fetched_at || position.as_of
-      const key = `${position.asset_id}:${price}:${source}:${fetchedAt}`
-      const row = grouped.get(key) || { id: key, symbol: position.asset.symbol, name: position.asset.name, network: networkDisplayName(position.asset.network), price, source, kind, fetchedAt, quoteSymbol: quote?.quote_symbol || position.asset.symbol, locations: new Set<string>() }
-      row.locations.add(digitalPositionLocation(position))
-      grouped.set(key, row)
+      const priority = isOverride ? 3 : quote ? 2 : 1
+      const fetchedAt = Date.parse((isOverride ? override.effective_at : quote?.fetched_at) || position.as_of) || 0
+      const previous = grouped.get(symbol)
+      if (!previous || priority > previous.priority || (priority === previous.priority && fetchedAt > previous.fetchedAt)) {
+        grouped.set(symbol, { id: symbol, symbol, price, fetchedAt, priority })
+      }
     })
-    return [...grouped.values()].sort((a, b) => a.symbol.localeCompare(b.symbol) || a.network.localeCompare(b.network) || a.source.localeCompare(b.source))
+    return [...grouped.values()].sort((a, b) => a.symbol.localeCompare(b.symbol))
   }, [positions])
-  const visibleAssetPriceRows = assetPriceRows.filter((row) => `${row.symbol} ${row.name} ${row.network} ${row.source} ${[...row.locations].join(' ')}`.toLowerCase().includes(priceSearch.toLowerCase()))
+  const visibleAssetPriceRows = assetPriceRows.filter((row) => row.symbol.toLowerCase().includes(priceSearch.toLowerCase()))
   const refreshDisplayedPrices = async () => {
     setPriceRefreshBusy(true)
     try { await Promise.allSettled([refreshLiveCryptoPrices(), refreshStockPrices()]) }
@@ -1278,12 +1278,12 @@ function Dashboard({ session }: { session: Session }) {
 
       <PasswordSettings open={showPasswordSettings} email={session.user.email || ''} onClose={() => setShowPasswordSettings(false)} />
 
-      <dialog ref={priceDialogRef} className="asset-prices-dialog" aria-labelledby="asset-prices-title" onClose={() => setShowPrices(false)} onClick={(event) => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) setShowPrices(false) } }}>
-        <div className="asset-prices-header"><div><p className="eyebrow">USD PER UNIT</p><h2 id="asset-prices-title">Latest asset prices</h2><p>Live quotes, saved snapshots and owner valuations.</p></div><button className="asset-prices-close" aria-label="Close asset prices" onClick={() => setShowPrices(false)} autoFocus><X size={18} /></button></div>
-        <div className="asset-prices-tools"><input type="search" aria-label="Search asset prices" placeholder="Search asset or network" value={priceSearch} onChange={(event) => setPriceSearch(event.target.value)} /><button className="secondary-button" onClick={() => void refreshDisplayedPrices()} disabled={priceRefreshBusy}><RefreshCw size={13} className={priceRefreshBusy ? 'spinning' : ''} />Refresh</button></div>
+      <dialog ref={priceDialogRef} className="asset-prices-dialog compact-prices-dialog" aria-labelledby="asset-prices-title" onClose={() => setShowPrices(false)} onClick={(event) => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) setShowPrices(false) } }}>
+        <div className="asset-prices-header"><div><h2 id="asset-prices-title">Prices <small>USD</small></h2></div><button className="asset-prices-close" aria-label="Close asset prices" onClick={() => setShowPrices(false)} autoFocus><X size={18} /></button></div>
+        <div className="asset-prices-tools"><input type="search" aria-label="Search asset prices" placeholder="Search symbol" value={priceSearch} onChange={(event) => setPriceSearch(event.target.value)} /><button className="secondary-button" onClick={() => void refreshDisplayedPrices()} disabled={priceRefreshBusy}><RefreshCw size={13} className={priceRefreshBusy ? 'spinning' : ''} />Refresh</button></div>
         {(livePriceDelayed || stockPriceDelayed) && <p className="asset-prices-note" role="status">{livePriceDelayed ? 'Crypto feed delayed. ' : ''}{stockPriceDelayed ? 'Stock feed delayed. ' : ''}Last available prices remain below.</p>}
-        <div className="asset-prices-list">{visibleAssetPriceRows.map((row) => <article key={row.id} className="asset-price-row"><div><strong>{row.symbol}</strong><span>{row.name} · {row.network}</span><small>{[...row.locations].join(' · ')}</small></div><div className="asset-price-quote"><b>{formatUnitPrice(row.price)}</b><span>{row.kind}</span></div><div className="asset-price-source"><span>{row.source}{row.kind === 'Live quote' && row.quoteSymbol.toUpperCase() !== row.symbol.toUpperCase() ? ` · ${row.quoteSymbol} quote` : ''}</span><time dateTime={row.fetchedAt}>{new Date(row.fetchedAt).toLocaleString()}</time></div></article>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
-        <p className="asset-prices-note">{assetPriceRows.length} price entries · Crypto quotes refresh every 5s; stocks every 1m. Saved snapshot times are shown for assets without a live quote.</p>
+        <div className="asset-prices-list">{visibleAssetPriceRows.map((row) => <article key={row.id} className="asset-price-row"><strong>{row.symbol}</strong><b>{formatUnitPrice(row.price)}</b></article>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
+        <p className="asset-prices-note">{assetPriceRows.length} symbols</p>
       </dialog>
 
       <main className="dashboard-main">

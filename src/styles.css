@@ -644,14 +644,17 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .asset-prices-close { display: grid; place-items: center; border: 1px solid #29333a; border-radius: 6px; padding: 5px; background: #161e24; color: #b9c8d0; }
 .asset-prices-tools { display: flex; gap: 8px; margin: 12px 0; }
 .asset-prices-tools input { flex: 1; min-width: 0; background: #0b1115; border: 1px solid #29333a; border-radius: 6px; padding: 8px; color: #d4dfe3; font-size: 12px; }
-.asset-prices-list { border-top: 1px solid #29333a; }
-.asset-price-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 12px; padding: 12px 0; border-bottom: 1px solid #252e35; }
-.asset-price-row > div { min-width: 0; display: grid; gap: 3px; }
-.asset-price-row strong { font-size: 12px; color: #dce5e9; }
-.asset-price-row span, .asset-price-row small, .asset-price-row time { color: #87959e; font-size: 9px; overflow-wrap: anywhere; }
-.asset-price-quote { text-align: right; }
-.asset-price-quote b { font: 11px 'DM Mono', monospace; color: #d9e8df; }
-.asset-price-row .asset-price-source { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px 10px; }
+.compact-prices-dialog { width: min(520px, calc(100vw - 20px)); max-height: min(620px, calc(100dvh - 32px)); padding: 12px; }
+.compact-prices-dialog .asset-prices-header h2 { font-size: 16px; }
+.compact-prices-dialog .asset-prices-header h2 small { color: #85929b; font: 9px 'DM Mono', monospace; margin-left: 5px; }
+.compact-prices-dialog .asset-prices-tools { margin: 9px 0; }
+.compact-prices-dialog .asset-prices-tools input { padding: 6px 8px; font-size: 11px; }
+.compact-prices-dialog .asset-prices-note { margin: 8px 0 0; font-size: 9px; }
+.asset-prices-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.asset-price-row { min-width: 0; display: flex; justify-content: space-between; align-items: center; gap: 5px; padding: 7px 6px; border: 1px solid #252e35; border-radius: 5px; background: #0b1115; }
+.asset-price-row strong { min-width: 0; font-size: 9px; line-height: 1.2; overflow-wrap: anywhere; color: #dce5e9; }
+.asset-price-row b { flex-shrink: 0; font: 9px 'DM Mono', monospace; color: #d9e8df; white-space: nowrap; }
+@media (max-width: 480px) { .asset-prices-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 420px) { .topbar-actions { gap: 6px; } .prices-button { padding: 5px; gap: 3px; } .asset-prices-dialog { padding: 12px; } }
 
 .installed-sign-in { margin-top: 18px; padding-top: 14px; border-top: 1px solid #29333a; }
