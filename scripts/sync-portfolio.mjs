@@ -1120,6 +1120,12 @@ if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(owne
 }
 const accountCache = new Map();
 const assetCache = new Map();
+// Owner-entered unit costs apply to changing balances as well as new source rows.
+const costRuleQuery = new URLSearchParams({ owner_id: `eq.${ownerId}`, "metadata->cost_basis_override": "not.is.null", select: "symbol,metadata" });
+const unitCostRules = new Map((await supabase(`/rest/v1/assets?${costRuleQuery}`))
+  .filter((asset) => asset.metadata?.cost_basis_override?.unit_cost_usd != null && Number.isFinite(Number(asset.metadata.cost_basis_override.unit_cost_usd)) && Number(asset.metadata.cost_basis_override.unit_cost_usd) >= 0)
+  .map((asset) => [asset.symbol.toUpperCase(), asset.metadata.cost_basis_override]));
+
 
 async function ensureAccount(account) {
   const cacheKey = `${account.name}|${account.institution}`;
@@ -1155,6 +1161,7 @@ async function replaceSource(source, positions) {
     for (const position of positions) {
       const previous = existingBySourceKey.get(position.source_key);
       const retainedCostBasis = previous?.cost_basis_usd ?? null;
+      const unitCostRule = unitCostRules.get(position.asset.symbol.toUpperCase());
       const override = source === "wio" ? previous?.metadata?.balance_override : null;
       const overrideTime = Date.parse(override?.effective_at || "");
       const incomingTime = Date.parse(position.as_of || now);
@@ -1166,10 +1173,10 @@ async function replaceSource(source, positions) {
         quantity: keepOverride ? Number(override.quantity) : position.quantity,
         price_usd: position.price_usd,
         value_usd: keepOverride ? round(Number(override.quantity) * position.price_usd) : position.value_usd,
-        cost_basis_usd: position.cost_basis_usd ?? retainedCostBasis,
+        cost_basis_usd: unitCostRule ? round((keepOverride ? Number(override.quantity) : position.quantity) * Number(unitCostRule.unit_cost_usd)) : position.cost_basis_usd ?? retainedCostBasis,
         source_key: position.source_key,
         as_of: keepOverride ? override.effective_at : position.as_of ?? now,
-        metadata: keepOverride ? { ...position.metadata, balance_override: override } : position.metadata ?? {},
+        metadata: { ...position.metadata, ...(keepOverride ? { balance_override: override } : {}), ...(unitCostRule ? { cost_basis_override: unitCostRule } : {}) },
       });
     }
     if (rows.length) await supabase("/rest/v1/positions?on_conflict=owner_id,source_key", { method: "POST", body: rows, prefer: "resolution=merge-duplicates,return=minimal" });
