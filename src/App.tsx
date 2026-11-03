@@ -286,6 +286,8 @@ function cardSourceForPosition(position: Position) {
 
 function Login() {
   const [email, setEmail] = useState('')
+  const [loginMethod, setLoginMethod] = useState<'link' | 'password'>('link')
+  const [password, setPassword] = useState('')
   const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'verifying' | 'error'>('idle')
   const [message, setMessage] = useState('')
   const [linkSent, setLinkSent] = useState(false)
@@ -310,6 +312,24 @@ function Login() {
     setMessage('Check your newest sign-in email. Enter its code below if provided, or copy the unopened sign-in link. Requesting another email replaces the previous code or link.')
   }
 
+
+  async function signInWithPassword(event: FormEvent) {
+    event.preventDefault()
+    const enteredPassword = password
+    setPassword('')
+    setStatus('verifying')
+    setMessage('')
+    try {
+      const result = await supabase.auth.signInWithPassword({ email: email.trim(), password: enteredPassword })
+      if (result.error) throw new Error(result.error.code === 'invalid_credentials' ? 'Email or password not recognized. If you have not set a password, use Set/change password in your already logged-in browser’s profile menu.' : result.error.message)
+      if (!result.data.session) throw new Error('Sign-in did not create a session. Please try again.')
+      setStatus('sent')
+      setMessage('Signed in. Opening your portfolio…')
+    } catch (failure) {
+      setStatus('error')
+      setMessage(failure instanceof Error ? failure.message : 'Unable to sign in. Please try again.')
+    }
+  }
 
   async function verifyHere(event: FormEvent) {
     event.preventDefault()
@@ -359,15 +379,18 @@ function Login() {
         <div className="login-card">
           <p className="eyebrow">WELCOME BACK</p>
           <h2>Open your portfolio</h2>
-          <p className="muted">Enter your approved email. We’ll send a one-time sign-in email—no password required.</p>
-          <form onSubmit={submit}>
+          <p className="muted">{loginMethod === 'password' ? 'Sign in with your approved email and password directly in this app.' : 'Enter your approved email to receive a one-time sign-in link.'}</p>
+          <div className="login-methods" aria-label="Sign-in method">{(['link', 'password'] as const).map((method) => <button key={method} type="button" aria-pressed={loginMethod === method} className={loginMethod === method ? 'active' : ''} onClick={() => { setLoginMethod(method); setPassword(''); setSignInProof(''); setMessage(''); setStatus('idle') }} disabled={status === 'sending' || status === 'verifying'}>{method === 'link' ? 'Email link' : 'Password'}</button>)}</div>
+          <form onSubmit={loginMethod === 'password' ? signInWithPassword : submit}>
             <label htmlFor="email">Email address</label>
-            <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required />
+            <input id="email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required />
+            {loginMethod === 'password' && <><label htmlFor="login-password">Password</label><input id="login-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></>}
             <button className="primary-button" type="submit" disabled={status === 'sending' || status === 'verifying'}>
-              {status === 'sending' ? 'Sending…' : 'Send sign-in email'}
+              {status === 'sending' ? 'Sending…' : status === 'verifying' ? 'Signing in…' : loginMethod === 'password' ? 'Sign in' : 'Send sign-in email'}
             </button>
           </form>
-          {linkSent && <form className="installed-sign-in" onSubmit={verifyHere}>
+          {loginMethod === 'password' && <p className="fine-print">First time with a password? In your already logged-in browser, open the profile menu and choose Set/change password. Each person sets their own password.</p>}
+          {loginMethod === 'link' && linkSent && <form className="installed-sign-in" onSubmit={verifyHere}>
             <p>Sign in here to keep your login in this app. Enter the code from your newest email if provided. For link-only emails, copy the link without opening or previewing it.</p>
             <label htmlFor="sign-in-proof">One-time code or unopened email link</label>
             <input id="sign-in-proof" type="text" autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} value={signInProof} onChange={(event) => setSignInProof(event.target.value)} placeholder="Enter code or paste unopened link" required />
@@ -549,6 +572,7 @@ function Dashboard({ session }: { session: Session }) {
   const [view, setView] = useState<View>('overview')
   const [mobileNav, setMobileNav] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
+  const [showPasswordSettings, setShowPasswordSettings] = useState(false)
   const [positions, setPositions] = useState<Position[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
@@ -1252,6 +1276,8 @@ function Dashboard({ session }: { session: Session }) {
       </aside>
       {mobileNav && <div className="nav-scrim" onClick={() => setMobileNav(false)} />}
 
+      <PasswordSettings open={showPasswordSettings} email={session.user.email || ''} onClose={() => setShowPasswordSettings(false)} />
+
       <dialog ref={priceDialogRef} className="asset-prices-dialog" aria-labelledby="asset-prices-title" onClose={() => setShowPrices(false)} onClick={(event) => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) setShowPrices(false) } }}>
         <div className="asset-prices-header"><div><p className="eyebrow">USD PER UNIT</p><h2 id="asset-prices-title">Latest asset prices</h2><p>Live quotes, saved snapshots and owner valuations.</p></div><button className="asset-prices-close" aria-label="Close asset prices" onClick={() => setShowPrices(false)} autoFocus><X size={18} /></button></div>
         <div className="asset-prices-tools"><input type="search" aria-label="Search asset prices" placeholder="Search asset or network" value={priceSearch} onChange={(event) => setPriceSearch(event.target.value)} /><button className="secondary-button" onClick={() => void refreshDisplayedPrices()} disabled={priceRefreshBusy}><RefreshCw size={13} className={priceRefreshBusy ? 'spinning' : ''} />Refresh</button></div>
@@ -1264,7 +1290,7 @@ function Dashboard({ session }: { session: Session }) {
         <header className="topbar">
           <div className="topbar-left"><button className="menu-button" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={21} /></button><button className="topbar-brand" onClick={() => chooseView('overview')}><Sparkles size={16} />Northstar</button></div>
           <div className="workspace-status" title={`Crypto: ${livePriceDelayed ? 'delayed' : lastLivePriceAt ? `updated ${lastLivePriceAt.toLocaleTimeString()}` : 'waiting for first update'} · Stocks: ${stockPriceDelayed ? '1m feed unavailable; using imported snapshot' : lastStockPriceAt ? `updated ${lastStockPriceAt.toLocaleTimeString()}` : 'waiting for first update'}`}><span className={`status-dot ${livePriceDelayed || stockPriceDelayed ? 'delayed' : ''}`} />Crypto 5s · Stocks 1m</div>
-          <div className="topbar-actions"><button className="prices-button" onClick={() => setShowPrices(true)} aria-haspopup="dialog"><Coins size={13} />Prices</button><a className="earnings-link" href="https://www.qfex.com/heatmap" target="_blank" rel="noreferrer"><span>Earnings calendar</span><ExternalLink size={12} /></a><div className="notional-toggle" aria-label="Display notional currency"><span>Notional</span>{(['USD', 'INR'] as DisplayCurrency[]).map((currency) => <button key={currency} className={displayCurrency === currency ? 'active' : ''} onClick={() => setDisplayCurrency(currency)}>{currency}</button>)}</div><div className="profile-wrap"><button className="profile-button" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen}><span>{session.user.email?.slice(0, 1).toUpperCase()}</span><ChevronDown size={15} /></button>{profileOpen && <div className="profile-menu"><strong>{session.user.email}</strong><small>Approved portfolio access</small><button onClick={() => supabase.auth.signOut()}><LogOut size={15} />Sign out</button></div>}</div></div>
+          <div className="topbar-actions"><button className="prices-button" onClick={() => setShowPrices(true)} aria-haspopup="dialog"><Coins size={13} />Prices</button><a className="earnings-link" href="https://www.qfex.com/heatmap" target="_blank" rel="noreferrer"><span>Earnings calendar</span><ExternalLink size={12} /></a><div className="notional-toggle" aria-label="Display notional currency"><span>Notional</span>{(['USD', 'INR'] as DisplayCurrency[]).map((currency) => <button key={currency} className={displayCurrency === currency ? 'active' : ''} onClick={() => setDisplayCurrency(currency)}>{currency}</button>)}</div><div className="profile-wrap"><button className="profile-button" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen}><span>{session.user.email?.slice(0, 1).toUpperCase()}</span><ChevronDown size={15} /></button>{profileOpen && <div className="profile-menu"><strong>{session.user.email}</strong><small>Approved portfolio access</small><button onClick={() => { setProfileOpen(false); setShowPasswordSettings(true) }}><ShieldCheck size={15} />Set/change password</button><button onClick={() => supabase.auth.signOut()}><LogOut size={15} />Sign out</button></div>}</div></div>
         </header>
 
         <div className={`page-content ${view === 'overview' ? 'overview-page' : ''}`}>
@@ -1450,6 +1476,57 @@ function Dashboard({ session }: { session: Session }) {
     </div>
   )
 }
+
+function PasswordSettings({ open, email, onClose }: { open: boolean; email: string; onClose: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement | null>(null)
+  const [password, setPassword] = useState('')
+  const [confirmation, setConfirmation] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const [saved, setSaved] = useState(false)
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    setPassword('')
+    setConfirmation('')
+    setMessage('')
+    setSaved(false)
+    if (open && !dialog.open) dialog.showModal()
+    if (!open && dialog.open) dialog.close()
+  }, [open])
+  async function save(event: FormEvent) {
+    event.preventDefault()
+    if (password.length < 12) { setMessage('Use at least 12 characters.'); return }
+    if (password !== confirmation) { setMessage('The passwords do not match.'); return }
+    setBusy(true)
+    setMessage('')
+    const enteredPassword = password
+    setPassword('')
+    setConfirmation('')
+    try {
+      // The current authenticated user changes only their own password.
+      const result = await supabase.auth.updateUser({ password: enteredPassword })
+      if (result.error) throw new Error(result.error.message)
+      setSaved(true)
+      setMessage('Password saved. Open the home-screen app, choose Password and sign in with your email and password.')
+    } catch (failure) {
+      setMessage(failure instanceof Error ? failure.message : 'Unable to save the password. Please try again.')
+    } finally { setBusy(false) }
+  }
+  return <dialog ref={dialogRef} className="asset-prices-dialog password-settings-dialog" aria-labelledby="password-settings-title" onClose={onClose}>
+    <div className="asset-prices-header"><div><p className="eyebrow">YOUR ACCOUNT</p><h2 id="password-settings-title">Set/change password</h2></div><button className="asset-prices-close" aria-label="Close password settings" onClick={onClose}><X size={18} /></button></div>
+    <p className="muted">Set a password for your own account to sign in directly from the home-screen app.</p>
+    {!saved && <form className="password-settings-form" onSubmit={save}>
+      <label htmlFor="password-account-email">Email address</label><input id="password-account-email" type="email" autoComplete="username" value={email} readOnly />
+      <label htmlFor="account-password">New password</label><input id="account-password" type="password" autoComplete="new-password" minLength={12} maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 12 characters" disabled={busy} required />
+      <label htmlFor="account-password-confirm">Confirm password</label><input id="account-password-confirm" type="password" autoComplete="new-password" minLength={12} maxLength={128} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} disabled={busy} required />
+      <button className="primary-button" type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save password'}</button>
+    </form>}
+    {message && <p className={`form-message ${saved ? 'sent' : 'error'}`} role="status">{message}</p>}
+    {saved && <button className="secondary-button" onClick={onClose}>Done</button>}
+  </dialog>
+}
+
 
 function EmptyState({ compact = false, onAdd }: { compact?: boolean; onAdd?: () => void }) {
   return <div className={`empty-state ${compact ? 'compact' : ''}`}><div className="icon-tile"><Layers3 size={22} /></div><strong>Your portfolio is ready for data</strong><p>Connect an importer or add the first holding manually.</p>{onAdd && <button className="primary-button compact" onClick={onAdd}><Plus size={17} />Add holding</button>}</div>

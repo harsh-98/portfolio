@@ -657,3 +657,13 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .installed-sign-in { margin-top: 18px; padding-top: 14px; border-top: 1px solid #29333a; }
 .installed-sign-in p { color: #8d999f; font-size: 11px; line-height: 1.6; }
 .topbar { height: calc(58px + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); }
+
+.login-methods { display: flex; gap: 4px; padding: 4px; margin-top: 18px; border: 1px solid #29333a; border-radius: 8px; }
+.login-methods button { flex: 1; border: 0; border-radius: 5px; padding: 9px; color: #8d999f; background: transparent; font-size: 12px; }
+.login-methods button.active { color: #a7e1c1; background: #203d30; }
+.password-settings-dialog { max-width: 460px; }
+.password-settings-dialog > .muted { margin: 12px 0 18px; font-size: 12px; line-height: 1.6; }
+.password-settings-form { display: grid; gap: 7px; }
+.password-settings-form label { color: #a2b0b7; font-size: 11px; }
+.password-settings-form input { min-width: 0; padding: 11px; margin-bottom: 7px; border: 1px solid #29333a; border-radius: 6px; color: #dce7e2; background: #0b1115; font-size: 14px; }
+.password-settings-form button { margin-top: 8px; }
