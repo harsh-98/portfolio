@@ -307,7 +307,7 @@ function Login() {
     }
     setStatus('sent')
     setLinkSent(true)
-    setMessage('Check your email for a secure sign-in link. You can paste the unopened email link below to sign in here.')
+    setMessage('Check your newest sign-in email. Enter its code below if provided, or copy the unopened sign-in link. Requesting another email replaces the previous code or link.')
   }
 
 
@@ -329,9 +329,13 @@ function Login() {
         if (link.origin !== expectedOrigin || link.pathname !== '/auth/v1/verify' || !tokenHash || !['magiclink', 'email', 'signup'].includes(kind || '')) {
           throw new Error('Paste the original sign-in link from the email. If it was already opened, request a fresh link.')
         }
-        result = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'email' })
+        result = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: kind === 'magiclink' || kind === 'signup' ? kind : 'email' })
       }
-      if (result.error) throw new Error(result.error.message)
+      if (result.error) {
+        if (result.error.code === 'otp_expired') throw new Error('This one-time code or link is expired or was already used. A link preview can use it too. Request a fresh email and use only its code, or copy its link without opening or previewing it.')
+        throw new Error(result.error.message)
+      }
+      if (!result.data.session) throw new Error('Sign-in did not create a session. Request a fresh email and try again.')
       setStatus('sent')
       setMessage('Signed in. Opening your portfolio…')
     } catch (failure) {
@@ -355,18 +359,18 @@ function Login() {
         <div className="login-card">
           <p className="eyebrow">WELCOME BACK</p>
           <h2>Open your portfolio</h2>
-          <p className="muted">Enter your approved email. We’ll send a one-time sign-in link—no password required.</p>
+          <p className="muted">Enter your approved email. We’ll send a one-time sign-in email—no password required.</p>
           <form onSubmit={submit}>
             <label htmlFor="email">Email address</label>
             <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required />
             <button className="primary-button" type="submit" disabled={status === 'sending' || status === 'verifying'}>
-              {status === 'sending' ? 'Sending…' : 'Send secure link'}
+              {status === 'sending' ? 'Sending…' : 'Send sign-in email'}
             </button>
           </form>
           {linkSent && <form className="installed-sign-in" onSubmit={verifyHere}>
-            <p>Using the home-screen app? Copy the unopened sign-in link from your email, return here and paste it to keep your login in this app.</p>
-            <label htmlFor="sign-in-proof">Email sign-in link or one-time code</label>
-            <input id="sign-in-proof" type="text" autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} value={signInProof} onChange={(event) => setSignInProof(event.target.value)} placeholder="Paste the email sign-in link" required />
+            <p>Sign in here to keep your login in this app. Enter the code from your newest email if provided. For link-only emails, copy the link without opening or previewing it.</p>
+            <label htmlFor="sign-in-proof">One-time code or unopened email link</label>
+            <input id="sign-in-proof" type="text" autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} value={signInProof} onChange={(event) => setSignInProof(event.target.value)} placeholder="Enter code or paste unopened link" required />
             <button className="primary-button" type="submit" disabled={status === 'sending' || status === 'verifying'}>{status === 'verifying' ? 'Signing in…' : 'Sign in here'}</button>
           </form>}
           {message && <div className={`form-message ${status}`}>{message}</div>}
