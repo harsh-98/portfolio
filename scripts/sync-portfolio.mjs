@@ -125,7 +125,7 @@ async function withXlsxFromArchive(sourcePath, callback) {
 }
 
 async function fetchJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const response = await fetch(url, { ...options, signal: options.signal ?? AbortSignal.timeout(45000) });
   const text = await response.text();
   let data;
   try { data = text ? JSON.parse(text) : null; } catch { data = { message: text.slice(0, 200) }; }
@@ -461,6 +461,43 @@ async function loadWatchedTokens(addresses, watchConfig) {
           value_usd: round(value),
           source_key: `oneinch:${hash(address.toLowerCase())}:${number(token.chain_id)}:rpc:${hash(contract)}`,
           metadata: { wallet_address: address.toLowerCase(), chain_id: number(token.chain_id), contract_address: contract, wallet: `${address.slice(0, 6)}…${address.slice(-4)}`, balance_type: "wallet_token", provider: "Direct RPC fallback", pricing_source: token.binance_pair || "configured" },
+        });
+      }
+    }
+  }
+  return positions;
+}
+
+// Reconcile direct wallet tokens independently: an indexed chain can still omit
+// individual contracts. Deduplicate by wallet, chain and contract, never symbol.
+async function loadRabbyTokenFallback(addresses) {
+  const positions = [];
+  const headers = { "X-Client": "Rabby", "X-Version": "0.9.69" };
+  const query = async (route, params) => {
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    return fetchJsonWithRetry(`https://api.rabby.io/v1/user/${route}?${new URLSearchParams(params)}`, { headers }, 1);
+  };
+  for (const address of addresses) {
+    console.error(`Reconciling wallet ${address.slice(0, 6)}…${address.slice(-4)} tokens with Rabby`);
+    const totals = await query("total_balance", { id: address, is_core: "true" });
+    for (const chain of totals.chain_list || []) {
+      if (number(chain.usd_value) < 0.01 || String(chain.id) === "plasma") continue;
+      const chainId = number(chain.community_id);
+      if (!chainId) throw new Error(`Missing Rabby chain identity: ${chain.id}`);
+      const tokens = await query("token_list", { id: address, chain_id: chain.id, is_all: "false" });
+      for (const token of tokens) {
+        if (token.is_wallet === false || token.is_suspicious === true) continue;
+        const quantity = number(token.amount);
+        const price = number(token.price);
+        if (quantity * price < 0.01) continue;
+        const contract = /^0x[0-9a-f]{40}$/i.test(token.id) ? token.id.toLowerCase() : "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+        const symbol = String(token.optimized_symbol || token.symbol || "TOKEN").toUpperCase().slice(0, 32);
+        positions.push({
+          account: { name: `Wallet · ${address} · ${chain.name}`, institution: "Rabby", account_type: "wallet", currency: "USD", source: "oneinch" },
+          asset: { symbol, name: token.name || symbol, asset_class: ["USDT", "USDC", "USDT0", "DAI", "USDE"].includes(symbol) ? "stablecoin" : ["XAUT", "XAUT0", "PAXG"].includes(symbol) ? "gold" : "crypto", currency: "USD", network: chain.name, contract_address: contract, metadata: { chain_id: chainId, provider: "Rabby token reconciliation" } },
+          quantity, price_usd: price, value_usd: round(quantity * price),
+          source_key: `oneinch:${hash(address.toLowerCase())}:${chainId}:rabby:${hash(contract)}`,
+          metadata: { wallet_address: address.toLowerCase(), wallet_hash: hash(address.toLowerCase()), chain_id: chainId, contract_address: contract, balance_type: "wallet_token", provider: "Rabby token reconciliation", rabby_verified: token.is_verified ?? null },
         });
       }
     }
@@ -1033,7 +1070,13 @@ if (shouldRun("oneinch")) {
     const watchConfig = process.env.PORTFOLIO_WATCH_TOKENS_JSON?.trim()
       || serverCredentials.PORTFOLIO_WATCH_TOKENS_JSON?.trim()
       || (defaultWatchFile ? await fs.readFile(defaultWatchFile, "utf8").catch(() => "") : "");
-    const fallbackPositions = await loadWatchedTokens(addresses, watchConfig);
+    const bundledWatches = JSON.parse(await fs.readFile(new URL("./watched-tokens.json", import.meta.url), "utf8"));
+    const configuredWatches = watchConfig ? JSON.parse(watchConfig) : [];
+    if (!Array.isArray(configuredWatches)) throw new Error("PORTFOLIO_WATCH_TOKENS_JSON must be an array");
+    const fallbackPositions = await loadWatchedTokens(addresses, JSON.stringify([...bundledWatches, ...configuredWatches]));
+    // Full independent discovery is explicit because Rabby rate limits broad audits.
+    // Persist verified omissions in the RPC watch list for reliable routine syncs.
+    if (args.has("--reconcile-rabby")) fallbackPositions.push(...await loadRabbyTokenFallback(addresses));
     // Plasma is not currently indexed by the main provider. Keep its live
     // wallet tokens and DeFi value in the same authoritative wallet refresh.
     const providerHasPlasma = oneInchPositions.some((position) => number(position.metadata?.chain_id) === 9745);

@@ -628,3 +628,8 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .digital-breakdown small { grid-column: 1; grid-row: 3; }
   .digital-breakdown em { grid-column: 2; grid-row: 3; }
 }
+
+.history-composition-picker { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 10px; color: #8d999f; font-size: 9px; }
+.history-composition-picker label { display: flex; align-items: center; gap: 8px; }
+.history-composition-picker select { padding: 5px 7px; color: #cbd3d7; background: #11171c; border: 1px solid #2a333a; border-radius: 5px; font-size: 10px; }
+.history-composition-picker small { color: #738088; }

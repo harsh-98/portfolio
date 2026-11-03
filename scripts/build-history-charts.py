@@ -130,7 +130,7 @@ for name,scope in keys.items():
         ranged=[r for r in scoped if r['date']>=cutoff]
         sampled=downsample(ranged)
         datasets[scope]['r_'+range_name]={'points':[{'date':r['date'],'total':r['total'],'platforms':r['platforms']} for r in sampled],'start':composition(ranged[0]),'latest':composition(ranged[-1]),'stats':stats}
-metadata={'manifest':{'built_at':dt.datetime.now(dt.timezone.utc).isoformat(),'platforms':platforms,'keys':keys,'max_points':200},'datasets':datasets}
+metadata={'manifest':{'built_at':dt.datetime.now(dt.timezone.utc).isoformat(),'platforms':platforms,'keys':keys,'max_points':200},'datasets':datasets,'compositions':{'d_'+r['date'].replace('-','_'):composition(r) for r in series}}
 existing=request('/rest/v1/assets',{'owner_id':'eq.'+owner,'symbol':'eq._HISTORY_CHART_CACHE','network':'eq.chart-cache:v1','select':'id'})
 body={'metadata':metadata}
 if existing:request('/rest/v1/assets',{'owner_id':'eq.'+owner,'id':'eq.'+existing[0]['id']},body,'PATCH')

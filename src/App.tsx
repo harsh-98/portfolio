@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import type { Session } from '@supabase/supabase-js'
 import { AllCommunityModule, ModuleRegistry, themeQuartz, type ColDef } from 'ag-grid-community'
 import { AgGridReact } from 'ag-grid-react'
-import { Area, AreaChart, Brush, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Area, AreaChart, Brush, CartesianGrid, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import {
   Activity,
   AlertTriangle,
@@ -509,6 +509,13 @@ function Dashboard({ session }: { session: Session }) {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [historyPayload, setHistoryPayload] = useState<HistoryChartPayload | null>(null)
+  const [selectedHistoryDate, setSelectedHistoryDate] = useState<string | null>(null)
+  const [selectedHistoryComposition, setSelectedHistoryComposition] = useState<HistoryComposition | null>(null)
+  const [compositionLoading, setCompositionLoading] = useState(false)
+  const [compositionError, setCompositionError] = useState('')
+  const compositionAbortRef = useRef<AbortController | null>(null)
+  const compositionCacheRef = useRef(new Map<string, HistoryComposition>())
+
   const [historyManifest, setHistoryManifest] = useState<HistoryChartManifest | null>(null)
   const historyManifestRef = useRef<HistoryChartManifest | null>(null)
   const historyCacheRef = useRef(new Map<string, HistoryChartPayload>())
@@ -647,6 +654,11 @@ function Dashboard({ session }: { session: Session }) {
     setHistoryLoading(true)
     setHistoryError('')
     setHistoryPayload(null)
+    compositionAbortRef.current?.abort()
+    setSelectedHistoryDate(null)
+    setSelectedHistoryComposition(null)
+    setCompositionLoading(false)
+    setCompositionError('')
     const timeout = window.setTimeout(() => {
       if (historyAbortRef.current !== controller) return
       setHistoryError('History loading took too long. Please retry.')
@@ -689,6 +701,49 @@ function Dashboard({ session }: { session: Session }) {
       }
     }
   }, [cryptoRange, selectedCryptoPlatform])
+
+  const selectHistoryPoint = useCallback(async (date: string | null) => {
+    compositionAbortRef.current?.abort()
+    setSelectedHistoryDate(date)
+    setSelectedHistoryComposition(null)
+    setCompositionError('')
+    setCompositionLoading(false)
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return
+    const cacheKey = `${historyManifestRef.current?.built_at}:${date}`
+    const cached = compositionCacheRef.current.get(cacheKey)
+    if (cached) { setSelectedHistoryComposition(cached); return }
+    const controller = new AbortController()
+    compositionAbortRef.current = controller
+    setCompositionLoading(true)
+    const timeout = window.setTimeout(() => {
+      if (compositionAbortRef.current === controller) {
+        setCompositionError('Snapshot loading took too long. Select the date to retry.')
+        setCompositionLoading(false)
+        controller.abort()
+      }
+    }, 30000)
+    try {
+      const key = `d_${date.replaceAll('-', '_')}`
+      // Fetch only this point's summarized composition, never raw snapshots.
+      const result = await supabase.from('assets').select(`composition:metadata->compositions->${key}`).eq('symbol', '_HISTORY_CHART_CACHE').eq('network', 'chart-cache:v1').abortSignal(controller.signal).single()
+      if (controller.signal.aborted) return
+      if (result.error) throw new Error(result.error.message)
+      const composition = (result.data as unknown as { composition: HistoryComposition }).composition
+      if (!composition?.assets || !composition.platforms) throw new Error('This snapshot composition is unavailable. Refresh history to retry.')
+      compositionCacheRef.current.set(cacheKey, composition)
+      setSelectedHistoryComposition(composition)
+    } catch (failure) {
+      if (!controller.signal.aborted) setCompositionError(failure instanceof Error ? failure.message : 'Unable to load snapshot composition.')
+    } finally {
+      window.clearTimeout(timeout)
+      if (compositionAbortRef.current === controller) {
+        compositionAbortRef.current = null
+        setCompositionLoading(false)
+      }
+    }
+  }, [])
+  useEffect(() => () => compositionAbortRef.current?.abort(), [])
+
 
   useEffect(() => {
     void load()
@@ -981,13 +1036,20 @@ function Dashboard({ session }: { session: Session }) {
   const priorCryptoPoint = historyPayload?.stats.previous_date ? { date: historyPayload.stats.previous_date } : undefined
   const cryptoWeeklyChange = historyPayload?.stats.latest_change || 0
   const cryptoSinceStart = latestCryptoPoint && firstCryptoPoint ? latestCryptoPoint.total - firstCryptoPoint.total : 0
-  const cryptoCompositionTotal = latestCryptoPoint
-    ? selectedCryptoPlatform === 'all' ? latestCryptoPoint.total : latestCryptoPoint.platforms.get(selectedCryptoPlatform) || 0
+  const compositionPoint = selectedHistoryDate
+    ? selectedHistoryComposition ? {
+      total: Object.values(selectedHistoryComposition.platforms).reduce((sum, value) => sum + value, 0),
+      platforms: new Map(Object.entries(selectedHistoryComposition.platforms)),
+      assets: new Map(Object.entries(selectedHistoryComposition.assets).map(([name, assets]) => [name, new Map(Object.entries(assets))])),
+    } : undefined
+    : latestCryptoPoint
+  const cryptoCompositionTotal = compositionPoint
+    ? selectedCryptoPlatform === 'all' ? compositionPoint.total : compositionPoint.platforms.get(selectedCryptoPlatform) || 0
     : 0
-  const cryptoPlatformRows = latestCryptoPoint
+  const cryptoPlatformRows = compositionPoint
     ? selectedCryptoPlatform === 'all'
-      ? [...latestCryptoPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, quantity: null as number | null, start: firstRangeCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
-      : [...(latestCryptoPoint.assets.get(selectedCryptoPlatform)?.values() || [])].map((asset) => ({ platform: asset.label, value: asset.value, quantity: asset.quantity, start: firstRangeCryptoPoint?.assets.get(selectedCryptoPlatform)?.get(asset.label)?.value || 0 })).sort((a, b) => b.value - a.value)
+      ? [...compositionPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, quantity: null as number | null, start: firstRangeCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
+      : [...(compositionPoint.assets.get(selectedCryptoPlatform)?.values() || [])].map((asset) => ({ platform: asset.label, value: asset.value, quantity: asset.quantity, start: firstRangeCryptoPoint?.assets.get(selectedCryptoPlatform)?.get(asset.label)?.value || 0 })).sort((a, b) => b.value - a.value)
     : []
   const realizedXtb = brokerageTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
   const cardBalances = positions.filter((position) => { const source = cardSourceForPosition(position); return source && selectedCardSources.includes(source) }).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
@@ -1240,11 +1302,14 @@ function Dashboard({ session }: { session: Session }) {
               <div className="history-grid">
                 <article className="panel history-chart-panel">
                   <div className="panel-heading"><div><p className="eyebrow">WEEKLY ADDRESS SNAPSHOTS</p><h2>Crypto wealth over time</h2></div><div className="history-chart-actions"><span>{latestRangeCryptoPoint ? `${formatMoney(latestRangeCryptoPoint.total)} · ${chartCryptoHistory.length} points` : 'Pending'}</span><div className="history-filter-row"><label>Address / platform<select value={selectedCryptoPlatform} onChange={(event) => setSelectedCryptoPlatform(event.target.value)}><option value="all">All addresses / platforms</option>{cryptoPlatforms.map((platform) => <option key={platform} value={platform}>{platform}</option>)}</select></label><div className="range-toggle" aria-label="Crypto chart range">{cryptoRanges.map((range) => <button key={range} className={cryptoRange === range ? 'active' : ''} onClick={() => setCryptoRange(range)}>{range}</button>)}</div></div></div></div>
-                  {chartCryptoHistory.length ? <div className="history-chart"><div className="history-chart-scroll"><div className="history-chart-canvas"><ResponsiveContainer width="100%" height="100%"><AreaChart data={cryptoChartData} margin={{ top: 8, right: 12, left: 8, bottom: 4 }}><defs><linearGradient id="cryptoArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#68d3a0" stopOpacity={0.32} /><stop offset="1" stopColor="#68d3a0" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="#1e252b" vertical={false} /><XAxis dataKey="date" minTickGap={42} tick={{ fill: '#5d6971', fontSize: 8 }} tickLine={false} axisLine={false} /><YAxis width={58} domain={['auto', 'auto']} tickFormatter={(value) => formatCompactMoney(Number(value))} tick={{ fill: '#5d6971', fontSize: 8 }} tickLine={false} axisLine={false} /><Tooltip formatter={(value) => [formatMoney(Number(value)), 'Wealth']} contentStyle={{ background: '#11171c', border: '1px solid #2a333a', borderRadius: 7, fontSize: 10 }} labelStyle={{ color: '#8d999f' }} /><Area type="monotone" dataKey="value" stroke="#68d3a0" strokeWidth={2} fill="url(#cryptoArea)" dot={false} activeDot={{ r: 4, fill: '#0d1216', stroke: '#68d3a0' }} /><Brush dataKey="date" height={24} travellerWidth={8} stroke="#315b47" fill="#0d1216" tickFormatter={(date) => String(date).slice(0, 7)} /></AreaChart></ResponsiveContainer></div></div></div> : <div className="history-empty"><Coins size={24} /><strong>{historyLoading ? 'Loading wallet history…' : historyError ? 'History could not be loaded' : 'No wallet history available'}</strong><p>{historyLoading ? 'Current balances are available while the historical chart loads.' : historyError ? 'Use Retry history to load the chart again.' : 'Historical snapshots will appear here after a successful import.'}</p></div>}
+                  {chartCryptoHistory.length ? <div className="history-chart"><div className="history-chart-scroll"><div className="history-chart-canvas"><ResponsiveContainer width="100%" height="100%"><AreaChart data={cryptoChartData} onClick={(state) => { const date = String(state.activeLabel || ''); if (chartCryptoHistory.some((point) => point.date === date)) void selectHistoryPoint(date) }} margin={{ top: 8, right: 12, left: 8, bottom: 4 }}><defs><linearGradient id="cryptoArea" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#68d3a0" stopOpacity={0.32} /><stop offset="1" stopColor="#68d3a0" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="#1e252b" vertical={false} /><XAxis dataKey="date" minTickGap={42} tick={{ fill: '#5d6971', fontSize: 8 }} tickLine={false} axisLine={false} /><YAxis width={58} domain={['auto', 'auto']} tickFormatter={(value) => formatCompactMoney(Number(value))} tick={{ fill: '#5d6971', fontSize: 8 }} tickLine={false} axisLine={false} /><Tooltip formatter={(value) => [formatMoney(Number(value)), 'Wealth']} contentStyle={{ background: '#11171c', border: '1px solid #2a333a', borderRadius: 7, fontSize: 10 }} labelStyle={{ color: '#8d999f' }} />{selectedHistoryDate && <ReferenceLine x={selectedHistoryDate} stroke="#a6d9bd" strokeDasharray="3 3" />}<Area type="monotone" dataKey="value" stroke="#68d3a0" strokeWidth={2} fill="url(#cryptoArea)" dot={false} activeDot={{ r: 4, fill: '#0d1216', stroke: '#68d3a0' }} /><Brush dataKey="date" height={24} travellerWidth={8} stroke="#315b47" fill="#0d1216" tickFormatter={(date) => String(date).slice(0, 7)} /></AreaChart></ResponsiveContainer></div></div></div> : <div className="history-empty"><Coins size={24} /><strong>{historyLoading ? 'Loading wallet history…' : historyError ? 'History could not be loaded' : 'No wallet history available'}</strong><p>{historyLoading ? 'Current balances are available while the historical chart loads.' : historyError ? 'Use Retry history to load the chart again.' : 'Historical snapshots will appear here after a successful import.'}</p></div>}
                 </article>
 
                 <article className="panel history-address-panel">
-                  <div className="panel-heading"><div><p className="eyebrow">{selectedCryptoPlatform === 'all' ? 'ADDRESS / PLATFORM' : 'ASSET / NETWORK'}</p><h2>Latest composition</h2></div><span>{formatMoney(cryptoCompositionTotal)}</span></div>
+                  <div className="panel-heading"><div><p className="eyebrow">{selectedCryptoPlatform === 'all' ? 'ADDRESS / PLATFORM' : 'ASSET / NETWORK'}</p><h2>{selectedHistoryDate ? 'Snapshot composition' : 'Latest composition'}</h2></div><span>{selectedHistoryDate && !selectedHistoryComposition ? compositionLoading ? 'Loading…' : 'Unavailable' : formatMoney(cryptoCompositionTotal)}</span></div>
+                  <div className="history-composition-picker"><label>Snapshot <select aria-label="Snapshot composition date" value={selectedHistoryDate || ''} onChange={(event) => void selectHistoryPoint(event.target.value || null)}><option value="">Latest</option>{chartCryptoHistory.map((point) => <option key={point.date} value={point.date}>{point.date}</option>)}</select></label><small>Tap a chart point to inspect its weekly snapshot.</small></div>
+                  {compositionLoading && <p role="status">Loading snapshot composition…</p>}
+                  {compositionError && <p role="alert">{compositionError} <button className="secondary-button" onClick={() => void selectHistoryPoint(selectedHistoryDate)}>Retry</button></p>}
                   <div className="history-address-list">{cryptoPlatformRows.map((row) => { const delta = row.value - row.start; return <div key={row.platform}><span><strong>{row.platform}</strong><small>{cryptoCompositionTotal ? ((row.value / cryptoCompositionTotal) * 100).toFixed(1) : '0.0'}%{row.quantity == null ? ' of digital wealth' : ` · ${formatAmount(row.quantity)} units`}</small></span><b>{formatMoney(row.value)}</b><em className={delta >= 0 ? 'value-positive' : 'value-negative'}>{delta >= 0 ? '+' : ''}{formatMoney(delta)}</em></div> })}</div>
                 </article>
 
