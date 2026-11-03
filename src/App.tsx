@@ -97,6 +97,7 @@ const classMeta: Record<AssetClass, { label: string; color: string }> = {
 type View = 'overview' | 'crypto' | 'losses' | 'holdings' | 'activity'
 type OverviewPanel = 'platforms' | 'allocation' | 'digital' | 'equities' | 'spending'
 type DisplayCurrency = 'USD' | 'INR'
+type PriceCategory = 'Equities' | 'Options' | 'Crypto' | 'Other'
 type CryptoRange = '3M' | '6M' | '1Y' | '3Y' | 'ALL'
 
 const cryptoRanges: CryptoRange[] = ['3M', '6M', '1Y', '3Y', 'ALL']
@@ -902,23 +903,29 @@ function Dashboard({ session }: { session: Session }) {
   }, [refreshStockPrices])
 
   const assetPriceRows = useMemo(() => {
-    const grouped = new Map<string, { id: string; symbol: string; price: number; fetchedAt: number; priority: number }>()
+    const grouped = new Map<string, { id: string; symbol: string; category: PriceCategory; price: number; fetchedAt: number; priority: number }>()
     positions.forEach((position) => {
       const quote = position.metadata.market_quote as { fetched_at?: string } | undefined
       const override = position.metadata.valuation_override as { price_usd?: number; effective_at?: string } | undefined
       const isOverride = typeof override?.price_usd === 'number' && Number.isFinite(override.price_usd) && override.price_usd >= 0
       const symbol = position.asset.symbol.toUpperCase()
+      const category: PriceCategory = position.metadata.instrument_type === 'option' || /\b\d{2}\/\d{2}\/\d{4}\s+[\d.]+\s+[CP]$/.test(symbol)
+        ? 'Options' : position.asset.asset_class === 'equity' ? 'Equities' : isDigitalAsset(position.asset) ? 'Crypto' : 'Other'
+      const key = `${category}:${symbol}`
       const price = isOverride ? override.price_usd! : Number(position.price_usd)
       const priority = isOverride ? 3 : quote ? 2 : 1
       const fetchedAt = Date.parse((isOverride ? override.effective_at : quote?.fetched_at) || position.as_of) || 0
-      const previous = grouped.get(symbol)
+      const previous = grouped.get(key)
       if (!previous || priority > previous.priority || (priority === previous.priority && fetchedAt > previous.fetchedAt)) {
-        grouped.set(symbol, { id: symbol, symbol, price, fetchedAt, priority })
+        grouped.set(key, { id: key, symbol, category, price, fetchedAt, priority })
       }
     })
     return [...grouped.values()].sort((a, b) => a.symbol.localeCompare(b.symbol))
   }, [positions])
   const visibleAssetPriceRows = assetPriceRows.filter((row) => row.symbol.toLowerCase().includes(priceSearch.toLowerCase()))
+  const assetPriceSections = (['Equities', 'Options', 'Crypto', 'Other'] as const)
+    .map((category) => ({ category, rows: visibleAssetPriceRows.filter((row) => row.category === category) }))
+    .filter((section) => section.rows.length > 0)
   const refreshDisplayedPrices = async () => {
     setPriceRefreshBusy(true)
     try { await Promise.allSettled([refreshLiveCryptoPrices(), refreshStockPrices()]) }
@@ -1282,7 +1289,7 @@ function Dashboard({ session }: { session: Session }) {
         <div className="asset-prices-header"><div><h2 id="asset-prices-title">Prices <small>USD</small></h2></div><button className="asset-prices-close" aria-label="Close asset prices" onClick={() => setShowPrices(false)} autoFocus><X size={18} /></button></div>
         <div className="asset-prices-tools"><input type="search" aria-label="Search asset prices" placeholder="Search symbol" value={priceSearch} onChange={(event) => setPriceSearch(event.target.value)} /><button className="secondary-button" onClick={() => void refreshDisplayedPrices()} disabled={priceRefreshBusy}><RefreshCw size={13} className={priceRefreshBusy ? 'spinning' : ''} />Refresh</button></div>
         {(livePriceDelayed || stockPriceDelayed) && <p className="asset-prices-note" role="status">{livePriceDelayed ? 'Crypto feed delayed. ' : ''}{stockPriceDelayed ? 'Stock feed delayed. ' : ''}Last available prices remain below.</p>}
-        <div className="asset-prices-list">{visibleAssetPriceRows.map((row) => <article key={row.id} className="asset-price-row"><strong>{row.symbol}</strong><b>{formatUnitPrice(row.price)}</b></article>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
+        <div className="asset-price-sections">{assetPriceSections.map((section) => <section key={section.category} aria-label={`${section.category} prices`}><h3>{section.category}{section.category === 'Options' && <small>USD / contract</small>}</h3><div className="asset-prices-list">{section.rows.map((row) => <article key={row.id} className="asset-price-row"><strong>{row.symbol}</strong><b>{formatUnitPrice(row.price)}</b></article>)}</div></section>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
         <p className="asset-prices-note">{assetPriceRows.length} symbols</p>
       </dialog>
 

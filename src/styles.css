@@ -670,3 +670,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .password-settings-form label { color: #a2b0b7; font-size: 11px; }
 .password-settings-form input { min-width: 0; padding: 11px; margin-bottom: 7px; border: 1px solid #29333a; border-radius: 6px; color: #dce7e2; background: #0b1115; font-size: 14px; }
 .password-settings-form button { margin-top: 8px; }
+
+.asset-price-sections { display: grid; gap: 12px; }
+.asset-price-sections h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; color: #a9c8b7; font: 700 10px 'DM Mono', monospace; }
+.asset-price-sections h3 small { color: #738088; font: 8px 'DM Mono', monospace; }
