@@ -1127,6 +1127,12 @@ const unitCostRules = new Map((await supabase(`/rest/v1/assets?${costRuleQuery}`
   .map((asset) => [asset.symbol.toUpperCase(), asset.metadata.cost_basis_override]));
 
 
+const valuationRuleQuery = new URLSearchParams({ owner_id: `eq.${ownerId}`, "metadata->valuation_override": "not.is.null", select: "symbol,metadata" });
+const valuationRules = new Map((await supabase(`/rest/v1/assets?${valuationRuleQuery}`))
+  .filter((asset) => asset.metadata?.valuation_override?.price_usd != null && Number.isFinite(Number(asset.metadata.valuation_override.price_usd)) && Number(asset.metadata.valuation_override.price_usd) >= 0)
+  .map((asset) => [asset.symbol.toUpperCase(), asset.metadata.valuation_override]));
+
+
 async function ensureAccount(account) {
   const cacheKey = `${account.name}|${account.institution}`;
   if (accountCache.has(cacheKey)) return accountCache.get(cacheKey);
@@ -1162,6 +1168,7 @@ async function replaceSource(source, positions) {
       const previous = existingBySourceKey.get(position.source_key);
       const retainedCostBasis = previous?.cost_basis_usd ?? null;
       const unitCostRule = unitCostRules.get(position.asset.symbol.toUpperCase());
+      const valuationRule = valuationRules.get(position.asset.symbol.toUpperCase());
       const override = source === "wio" ? previous?.metadata?.balance_override : null;
       const overrideTime = Date.parse(override?.effective_at || "");
       const incomingTime = Date.parse(position.as_of || now);
@@ -1171,12 +1178,12 @@ async function replaceSource(source, positions) {
         account_id: await ensureAccount(position.account),
         asset_id: await ensureAsset(position.asset),
         quantity: keepOverride ? Number(override.quantity) : position.quantity,
-        price_usd: position.price_usd,
-        value_usd: keepOverride ? round(Number(override.quantity) * position.price_usd) : position.value_usd,
+        price_usd: valuationRule ? Number(valuationRule.price_usd) : position.price_usd,
+        value_usd: valuationRule ? round((keepOverride ? Number(override.quantity) : position.quantity) * Number(valuationRule.price_usd)) : keepOverride ? round(Number(override.quantity) * position.price_usd) : position.value_usd,
         cost_basis_usd: unitCostRule ? round((keepOverride ? Number(override.quantity) : position.quantity) * Number(unitCostRule.unit_cost_usd)) : position.cost_basis_usd ?? retainedCostBasis,
         source_key: position.source_key,
         as_of: keepOverride ? override.effective_at : position.as_of ?? now,
-        metadata: { ...position.metadata, ...(keepOverride ? { balance_override: override } : {}), ...(unitCostRule ? { cost_basis_override: unitCostRule } : {}) },
+        metadata: { ...position.metadata, ...(keepOverride ? { balance_override: override } : {}), ...(unitCostRule ? { cost_basis_override: unitCostRule } : {}), ...(valuationRule ? { valuation_override: valuationRule } : {}) },
       });
     }
     if (rows.length) await supabase("/rest/v1/positions?on_conflict=owner_id,source_key", { method: "POST", body: rows, prefer: "resolution=merge-duplicates,return=minimal" });

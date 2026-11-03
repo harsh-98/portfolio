@@ -709,6 +709,10 @@ function Dashboard({ session }: { session: Session }) {
       setPositions((current) => current.map((position) => {
         const assetClass = effectiveAssetClass(position.asset)
         if (!['crypto', 'stablecoin', 'gold'].includes(assetClass)) return position
+        const override = position.metadata.valuation_override as { price_usd?: number } | undefined
+        if (typeof override?.price_usd === 'number' && Number.isFinite(override.price_usd) && override.price_usd >= 0) {
+          return { ...position, price_usd: override.price_usd, value_usd: Math.round(Number(position.quantity) * override.price_usd * 100) / 100 }
+        }
         const price = prices.get(livePriceSymbol(position.asset.symbol))
         if (!price) return position
         return { ...position, price_usd: price, value_usd: Math.round(Number(position.quantity) * price * 100) / 100 }
@@ -822,13 +826,15 @@ function Dashboard({ session }: { session: Session }) {
   }, [positions, selectedPlatform])
   const equityPositions = positions.filter((position) => position.asset.asset_class === 'equity')
   const cryptoExposure = useMemo(() => {
-    const grouped = new Map<string, { symbol: string; name: string; value: number; quantity: number; pricedCost: number; pricedValue: number; pricedQuantity: number; breakdown: Map<string, { value: number; quantity: number; costBasis: number; pricedValue: number; pricedQuantity: number }> }>()
+    const grouped = new Map<string, { symbol: string; name: string; value: number; quantity: number; pricedCost: number; pricedValue: number; pricedQuantity: number; writtenDown: boolean; breakdown: Map<string, { value: number; quantity: number; costBasis: number; pricedValue: number; pricedQuantity: number }> }>()
     positions.filter((position) => ['crypto', 'stablecoin'].includes(effectiveAssetClass(position.asset))).forEach((position) => {
       const symbol = canonicalCryptoSymbol(position.asset.symbol)
-      const current = grouped.get(symbol) || { symbol, name: position.asset.name, value: 0, quantity: 0, pricedCost: 0, pricedValue: 0, pricedQuantity: 0, breakdown: new Map<string, { value: number; quantity: number; costBasis: number; pricedValue: number; pricedQuantity: number }>() }
+      const current = grouped.get(symbol) || { symbol, name: position.asset.name, value: 0, quantity: 0, pricedCost: 0, pricedValue: 0, pricedQuantity: 0, writtenDown: false, breakdown: new Map<string, { value: number; quantity: number; costBasis: number; pricedValue: number; pricedQuantity: number }>() }
       const value = Number(position.value_usd)
       const quantity = Number(position.quantity)
       const costBasis = position.cost_basis_usd == null ? 0 : Number(position.cost_basis_usd)
+      const override = position.metadata.valuation_override as { price_usd?: number } | undefined
+      current.writtenDown ||= override?.price_usd === 0
       current.value += value
       current.quantity += quantity
       if (position.cost_basis_usd != null) {
@@ -848,7 +854,7 @@ function Dashboard({ session }: { session: Session }) {
       current.breakdown.set(platform, detail)
       grouped.set(symbol, current)
     })
-    return [...grouped.values()].filter((item) => item.value >= 100).sort((a, b) => b.value - a.value)
+    return [...grouped.values()].filter((item) => item.value >= 100 || (item.writtenDown && item.pricedCost >= 100)).sort((a, b) => b.value - a.value)
   }, [positions])
   const digitalPnl = useMemo(() => {
     const shownSymbols = new Set(cryptoExposure.map((asset) => asset.symbol))
