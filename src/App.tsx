@@ -183,21 +183,22 @@ async function fetchLiveCryptoPrices() {
       return response.json() as Promise<Record<string, string>>
     }),
   ])
-  const prices = new Map<string, number>()
+  if (binanceResult.status === 'rejected' && hyperliquidResult.status === 'rejected') throw new Error('Live crypto feeds unavailable')
+  const prices = new Map<string, { price: number; source: string; kind: string }>()
   if (binanceResult.status === 'fulfilled') {
     binanceResult.value.forEach(({ symbol, price }) => {
       if (!symbol.endsWith('USDT')) return
       const value = Number(price)
-      if (Number.isFinite(value) && value > 0) prices.set(symbol.slice(0, -4), value)
+      if (Number.isFinite(value) && value > 0) prices.set(symbol.slice(0, -4), { price: value, source: 'Binance (USDT)', kind: 'Live quote' })
     })
   }
   if (hyperliquidResult.status === 'fulfilled') {
     Object.entries(hyperliquidResult.value).forEach(([symbol, rawPrice]) => {
       const value = Number(rawPrice)
-      if (Number.isFinite(value) && value > 0) prices.set(symbol.toUpperCase(), value)
+      if (Number.isFinite(value) && value > 0) prices.set(symbol.toUpperCase(), { price: value, source: 'Hyperliquid', kind: 'Live quote' })
     })
   }
-  ;['USDT', 'USDC', 'DAI', 'USDE', 'USD1', 'FRAX', 'LUSD', 'GHO'].forEach((symbol) => prices.set(symbol, 1))
+  ;['USDT', 'USDC', 'DAI', 'USDE', 'USD1', 'FRAX', 'LUSD', 'GHO'].forEach((symbol) => prices.set(symbol, { price: 1, source: 'USD parity assumption', kind: 'USD peg' }))
   if (!prices.size) throw new Error('Live crypto feeds unavailable')
   return prices
 }
@@ -570,6 +571,17 @@ function Dashboard({ session }: { session: Session }) {
   const [lastLivePriceAt, setLastLivePriceAt] = useState<Date | null>(null)
   const [livePriceDelayed, setLivePriceDelayed] = useState(false)
   const [lastStockPriceAt, setLastStockPriceAt] = useState<Date | null>(null)
+  const [showPrices, setShowPrices] = useState(false)
+  const [priceSearch, setPriceSearch] = useState('')
+  const [priceRefreshBusy, setPriceRefreshBusy] = useState(false)
+  const priceDialogRef = useRef<HTMLDialogElement | null>(null)
+  useEffect(() => {
+    const dialog = priceDialogRef.current
+    if (!dialog) return
+    if (showPrices && !dialog.open) dialog.showModal()
+    if (!showPrices && dialog.open) dialog.close()
+  }, [showPrices])
+
   const [stockPriceDelayed, setStockPriceDelayed] = useState(false)
   const positionsRef = useRef<Position[]>([])
   const inrPerUsd = useMemo(() => {
@@ -761,6 +773,7 @@ function Dashboard({ session }: { session: Session }) {
   const refreshLiveCryptoPrices = useCallback(async () => {
     try {
       const prices = await fetchLiveCryptoPrices()
+      const fetchedAt = new Date().toISOString()
       setPositions((current) => current.map((position) => {
         const assetClass = effectiveAssetClass(position.asset)
         if (!['crypto', 'stablecoin', 'gold'].includes(assetClass)) return position
@@ -768,9 +781,10 @@ function Dashboard({ session }: { session: Session }) {
         if (typeof override?.price_usd === 'number' && Number.isFinite(override.price_usd) && override.price_usd >= 0) {
           return { ...position, price_usd: override.price_usd, value_usd: Math.round(Number(position.quantity) * override.price_usd * 100) / 100 }
         }
-        const price = prices.get(livePriceSymbol(position.asset.symbol))
-        if (!price) return position
-        return { ...position, price_usd: price, value_usd: Math.round(Number(position.quantity) * price * 100) / 100 }
+        const quoteSymbol = livePriceSymbol(position.asset.symbol)
+        const quote = prices.get(quoteSymbol)
+        if (!quote) return position
+        return { ...position, price_usd: quote.price, value_usd: Math.round(Number(position.quantity) * quote.price * 100) / 100, metadata: { ...position.metadata, market_quote: { source: quote.source, kind: quote.kind, quote_symbol: quoteSymbol, fetched_at: fetchedAt } } }
       }))
       setLastLivePriceAt(new Date())
       setLivePriceDelayed(false)
@@ -798,11 +812,12 @@ function Dashboard({ session }: { session: Session }) {
       return
     }
     const prices = new Map<string, number>(Object.entries(data.prices).map(([symbol, price]) => [symbol.toUpperCase(), Number(price)]))
+    const fetchedAt = new Date(data.as_of || Date.now()).toISOString()
     setPositions((current) => current.map((position) => {
       if (position.asset.asset_class !== 'equity') return position
       const price = prices.get(canonicalEquitySymbol(position.asset.symbol))
       if (!price || !Number.isFinite(price)) return position
-      return { ...position, price_usd: price, value_usd: Math.round(Number(position.quantity) * price * 100) / 100 }
+      return { ...position, price_usd: price, value_usd: Math.round(Number(position.quantity) * price * 100) / 100, metadata: { ...position.metadata, market_quote: { source: String(data.source || data.provider || 'Stock market feed'), kind: 'Live quote', quote_symbol: canonicalEquitySymbol(position.asset.symbol), fetched_at: fetchedAt } } }
     }))
     setLastStockPriceAt(new Date(data.as_of || Date.now()))
     setStockPriceDelayed(false)
@@ -818,6 +833,31 @@ function Dashboard({ session }: { session: Session }) {
     }, 60000)
     return () => window.clearInterval(timer)
   }, [refreshStockPrices])
+
+  const assetPriceRows = useMemo(() => {
+    const grouped = new Map<string, { id: string; symbol: string; name: string; network: string; price: number; source: string; kind: string; fetchedAt: string; quoteSymbol: string; locations: Set<string> }>()
+    positions.forEach((position) => {
+      const quote = position.metadata.market_quote as { source?: string; kind?: string; fetched_at?: string; quote_symbol?: string } | undefined
+      const override = position.metadata.valuation_override as { price_usd?: number; effective_at?: string } | undefined
+      const isOverride = typeof override?.price_usd === 'number' && Number.isFinite(override.price_usd) && override.price_usd >= 0
+      const price = isOverride ? override.price_usd! : Number(position.price_usd)
+      const kind = isOverride ? 'Owner value' : quote?.kind || 'Saved snapshot'
+      const source = isOverride ? 'Owner valuation' : quote?.source || String(position.metadata.provider || position.metadata.pricing_source || position.account.institution)
+      const fetchedAt = isOverride ? override.effective_at || position.as_of : quote?.fetched_at || position.as_of
+      const key = `${position.asset_id}:${price}:${source}:${fetchedAt}`
+      const row = grouped.get(key) || { id: key, symbol: position.asset.symbol, name: position.asset.name, network: networkDisplayName(position.asset.network), price, source, kind, fetchedAt, quoteSymbol: quote?.quote_symbol || position.asset.symbol, locations: new Set<string>() }
+      row.locations.add(digitalPositionLocation(position))
+      grouped.set(key, row)
+    })
+    return [...grouped.values()].sort((a, b) => a.symbol.localeCompare(b.symbol) || a.network.localeCompare(b.network) || a.source.localeCompare(b.source))
+  }, [positions])
+  const visibleAssetPriceRows = assetPriceRows.filter((row) => `${row.symbol} ${row.name} ${row.network} ${row.source} ${[...row.locations].join(' ')}`.toLowerCase().includes(priceSearch.toLowerCase()))
+  const refreshDisplayedPrices = async () => {
+    setPriceRefreshBusy(true)
+    try { await Promise.allSettled([refreshLiveCryptoPrices(), refreshStockPrices()]) }
+    finally { setPriceRefreshBusy(false) }
+  }
+  const formatUnitPrice = (value: number) => !Number.isFinite(value) ? 'Unavailable' : value > 0 && value < 0.000001 ? `$${value.toPrecision(5)}` : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: value < 1 ? 10 : value < 100 ? 6 : 2 }).format(value)
 
   const total = useMemo(() => positions.reduce((sum, position) => sum + Number(position.value_usd), 0), [positions])
   const allocation = useMemo(() => {
@@ -1169,11 +1209,19 @@ function Dashboard({ session }: { session: Session }) {
       </aside>
       {mobileNav && <div className="nav-scrim" onClick={() => setMobileNav(false)} />}
 
+      <dialog ref={priceDialogRef} className="asset-prices-dialog" aria-labelledby="asset-prices-title" onClose={() => setShowPrices(false)} onClick={(event) => { if (event.target === event.currentTarget) { const rect = event.currentTarget.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) setShowPrices(false) } }}>
+        <div className="asset-prices-header"><div><p className="eyebrow">USD PER UNIT</p><h2 id="asset-prices-title">Latest asset prices</h2><p>Live quotes, saved snapshots and owner valuations.</p></div><button className="asset-prices-close" aria-label="Close asset prices" onClick={() => setShowPrices(false)} autoFocus><X size={18} /></button></div>
+        <div className="asset-prices-tools"><input type="search" aria-label="Search asset prices" placeholder="Search asset or network" value={priceSearch} onChange={(event) => setPriceSearch(event.target.value)} /><button className="secondary-button" onClick={() => void refreshDisplayedPrices()} disabled={priceRefreshBusy}><RefreshCw size={13} className={priceRefreshBusy ? 'spinning' : ''} />Refresh</button></div>
+        {(livePriceDelayed || stockPriceDelayed) && <p className="asset-prices-note" role="status">{livePriceDelayed ? 'Crypto feed delayed. ' : ''}{stockPriceDelayed ? 'Stock feed delayed. ' : ''}Last available prices remain below.</p>}
+        <div className="asset-prices-list">{visibleAssetPriceRows.map((row) => <article key={row.id} className="asset-price-row"><div><strong>{row.symbol}</strong><span>{row.name} · {row.network}</span><small>{[...row.locations].join(' · ')}</small></div><div className="asset-price-quote"><b>{formatUnitPrice(row.price)}</b><span>{row.kind}</span></div><div className="asset-price-source"><span>{row.source}{row.kind === 'Live quote' && row.quoteSymbol.toUpperCase() !== row.symbol.toUpperCase() ? ` · ${row.quoteSymbol} quote` : ''}</span><time dateTime={row.fetchedAt}>{new Date(row.fetchedAt).toLocaleString()}</time></div></article>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
+        <p className="asset-prices-note">{assetPriceRows.length} price entries · Crypto quotes refresh every 5s; stocks every 1m. Saved snapshot times are shown for assets without a live quote.</p>
+      </dialog>
+
       <main className="dashboard-main">
         <header className="topbar">
           <div className="topbar-left"><button className="menu-button" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu size={21} /></button><button className="topbar-brand" onClick={() => chooseView('overview')}><Sparkles size={16} />Northstar</button></div>
           <div className="workspace-status" title={`Crypto: ${livePriceDelayed ? 'delayed' : lastLivePriceAt ? `updated ${lastLivePriceAt.toLocaleTimeString()}` : 'waiting for first update'} · Stocks: ${stockPriceDelayed ? '1m feed unavailable; using imported snapshot' : lastStockPriceAt ? `updated ${lastStockPriceAt.toLocaleTimeString()}` : 'waiting for first update'}`}><span className={`status-dot ${livePriceDelayed || stockPriceDelayed ? 'delayed' : ''}`} />Crypto 5s · Stocks 1m</div>
-          <div className="topbar-actions"><a className="earnings-link" href="https://www.qfex.com/heatmap" target="_blank" rel="noreferrer"><span>Earnings calendar</span><ExternalLink size={12} /></a><div className="notional-toggle" aria-label="Display notional currency"><span>Notional</span>{(['USD', 'INR'] as DisplayCurrency[]).map((currency) => <button key={currency} className={displayCurrency === currency ? 'active' : ''} onClick={() => setDisplayCurrency(currency)}>{currency}</button>)}</div><div className="profile-wrap"><button className="profile-button" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen}><span>{session.user.email?.slice(0, 1).toUpperCase()}</span><ChevronDown size={15} /></button>{profileOpen && <div className="profile-menu"><strong>{session.user.email}</strong><small>Approved portfolio access</small><button onClick={() => supabase.auth.signOut()}><LogOut size={15} />Sign out</button></div>}</div></div>
+          <div className="topbar-actions"><button className="prices-button" onClick={() => setShowPrices(true)} aria-haspopup="dialog"><Coins size={13} />Prices</button><a className="earnings-link" href="https://www.qfex.com/heatmap" target="_blank" rel="noreferrer"><span>Earnings calendar</span><ExternalLink size={12} /></a><div className="notional-toggle" aria-label="Display notional currency"><span>Notional</span>{(['USD', 'INR'] as DisplayCurrency[]).map((currency) => <button key={currency} className={displayCurrency === currency ? 'active' : ''} onClick={() => setDisplayCurrency(currency)}>{currency}</button>)}</div><div className="profile-wrap"><button className="profile-button" onClick={() => setProfileOpen((open) => !open)} aria-expanded={profileOpen}><span>{session.user.email?.slice(0, 1).toUpperCase()}</span><ChevronDown size={15} /></button>{profileOpen && <div className="profile-menu"><strong>{session.user.email}</strong><small>Approved portfolio access</small><button onClick={() => supabase.auth.signOut()}><LogOut size={15} />Sign out</button></div>}</div></div>
         </header>
 
         <div className={`page-content ${view === 'overview' ? 'overview-page' : ''}`}>
