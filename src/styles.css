@@ -653,3 +653,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .asset-price-quote b { font: 11px 'DM Mono', monospace; color: #d9e8df; }
 .asset-price-row .asset-price-source { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 3px 10px; }
 @media (max-width: 420px) { .topbar-actions { gap: 6px; } .prices-button { padding: 5px; gap: 3px; } .asset-prices-dialog { padding: 12px; } }
+
+.installed-sign-in { margin-top: 18px; padding-top: 14px; border-top: 1px solid #29333a; }
+.installed-sign-in p { color: #8d999f; font-size: 11px; line-height: 1.6; }
+.topbar { height: calc(58px + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); }

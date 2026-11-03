@@ -286,8 +286,10 @@ function cardSourceForPosition(position: Position) {
 
 function Login() {
   const [email, setEmail] = useState('')
-  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'verifying' | 'error'>('idle')
   const [message, setMessage] = useState('')
+  const [linkSent, setLinkSent] = useState(false)
+  const [signInProof, setSignInProof] = useState('')
 
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -296,7 +298,7 @@ function Login() {
     const redirectTo = `${window.location.origin}${import.meta.env.BASE_URL}`
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: redirectTo },
+      options: { emailRedirectTo: redirectTo, shouldCreateUser: false },
     })
     if (error) {
       setStatus('error')
@@ -304,7 +306,38 @@ function Login() {
       return
     }
     setStatus('sent')
-    setMessage('Check your email for a secure sign-in link.')
+    setLinkSent(true)
+    setMessage('Check your email for a secure sign-in link. You can paste the unopened email link below to sign in here.')
+  }
+
+
+  async function verifyHere(event: FormEvent) {
+    event.preventDefault()
+    const proof = signInProof.trim()
+    setSignInProof('')
+    setStatus('verifying')
+    setMessage('')
+    try {
+      let result
+      if (/^\d{6,10}$/.test(proof)) {
+        result = await supabase.auth.verifyOtp({ email: email.trim(), token: proof, type: 'email' })
+      } else {
+        const link = new URL(proof)
+        const expectedOrigin = new URL(import.meta.env.VITE_SUPABASE_URL).origin
+        const tokenHash = link.searchParams.get('token_hash') || link.searchParams.get('token')
+        const kind = link.searchParams.get('type')
+        if (link.origin !== expectedOrigin || link.pathname !== '/auth/v1/verify' || !tokenHash || !['magiclink', 'email', 'signup'].includes(kind || '')) {
+          throw new Error('Paste the original sign-in link from the email. If it was already opened, request a fresh link.')
+        }
+        result = await supabase.auth.verifyOtp({ token_hash: tokenHash, type: 'email' })
+      }
+      if (result.error) throw new Error(result.error.message)
+      setStatus('sent')
+      setMessage('Signed in. Opening your portfolio…')
+    } catch (failure) {
+      setStatus('error')
+      setMessage(failure instanceof TypeError ? 'Paste the sign-in link from your email, or enter its one-time code if provided.' : failure instanceof Error ? failure.message : 'Unable to sign in. Request a fresh email link and try again.')
+    }
   }
 
   return (
@@ -326,10 +359,16 @@ function Login() {
           <form onSubmit={submit}>
             <label htmlFor="email">Email address</label>
             <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" required />
-            <button className="primary-button" type="submit" disabled={status === 'sending'}>
+            <button className="primary-button" type="submit" disabled={status === 'sending' || status === 'verifying'}>
               {status === 'sending' ? 'Sending…' : 'Send secure link'}
             </button>
           </form>
+          {linkSent && <form className="installed-sign-in" onSubmit={verifyHere}>
+            <p>Using the home-screen app? Copy the unopened sign-in link from your email, return here and paste it to keep your login in this app.</p>
+            <label htmlFor="sign-in-proof">Email sign-in link or one-time code</label>
+            <input id="sign-in-proof" type="text" autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} value={signInProof} onChange={(event) => setSignInProof(event.target.value)} placeholder="Paste the email sign-in link" required />
+            <button className="primary-button" type="submit" disabled={status === 'sending' || status === 'verifying'}>{status === 'verifying' ? 'Signing in…' : 'Sign in here'}</button>
+          </form>}
           {message && <div className={`form-message ${status}`}>{message}</div>}
           <p className="fine-print">Financial data is available only after authentication. The public site contains no portfolio records.</p>
         </div>
