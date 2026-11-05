@@ -953,7 +953,7 @@ function Dashboard({ session }: { session: Session }) {
     })
     return [...grouped.values()].sort((a, b) => a.symbol.localeCompare(b.symbol))
   }, [positions])
-  const visibleAssetPriceRows = assetPriceRows.filter((row) => row.symbol.toLowerCase().includes(priceSearch.toLowerCase()))
+  const visibleAssetPriceRows = assetPriceRows.filter((row) => (row.symbol === 'INR' ? 'USD/INR' : row.symbol).toLowerCase().includes(priceSearch.toLowerCase()))
   const assetPriceSections = (['Equities', 'Options', 'Crypto', 'Other'] as const)
     .map((category) => ({ category, rows: visibleAssetPriceRows.filter((row) => row.category === category) }))
     .filter((section) => section.rows.length > 0)
@@ -1320,7 +1320,7 @@ function Dashboard({ session }: { session: Session }) {
         <div className="asset-prices-header"><div><h2 id="asset-prices-title">Prices <small>USD</small></h2></div><button className="asset-prices-close" aria-label="Close asset prices" onClick={() => setShowPrices(false)} autoFocus><X size={18} /></button></div>
         <div className="asset-prices-tools"><input type="search" aria-label="Search asset prices" placeholder="Search symbol" value={priceSearch} onChange={(event) => setPriceSearch(event.target.value)} /><button className="secondary-button" onClick={() => void refreshDisplayedPrices()} disabled={priceRefreshBusy}><RefreshCw size={13} className={priceRefreshBusy ? 'spinning' : ''} />Refresh</button></div>
         {(livePriceDelayed || stockPriceDelayed) && <p className="asset-prices-note" role="status">{livePriceDelayed ? 'Crypto feed delayed. ' : ''}{stockPriceDelayed ? `${stockPriceError || 'Stock feed delayed.'} ` : ''}Last available prices remain below.</p>}
-        <div className="asset-price-sections">{assetPriceSections.map((section) => <section key={section.category} aria-label={`${section.category} prices`}><h3>{section.category}{section.category === 'Options' && <small>USD / contract</small>}{section.category === 'Equities' && <small>{stockPriceDelayed ? 'delayed' : lastStockPriceAt ? `fetched ${lastStockPriceAt.toLocaleTimeString()}` : 'fetching…'}</small>}</h3><div className="asset-prices-list">{section.rows.map((row) => <article key={row.id} className="asset-price-row"><strong>{row.symbol}</strong><b>{formatUnitPrice(row.price)}</b></article>)}</div></section>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
+        <div className="asset-price-sections">{assetPriceSections.map((section) => <section key={section.category} aria-label={`${section.category} prices`}><h3>{section.category}{section.category === 'Options' && <small>USD / contract</small>}{section.category === 'Equities' && <small>{stockPriceDelayed ? 'delayed' : lastStockPriceAt ? `fetched ${lastStockPriceAt.toLocaleTimeString()}` : 'fetching…'}</small>}</h3><div className="asset-prices-list">{section.rows.map((row) => <article key={row.id} className="asset-price-row"><strong>{row.symbol === 'INR' ? 'USD/INR' : row.symbol}</strong><b>{row.symbol === 'INR' ? Number.isFinite(row.price) && row.price > 0 ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1 / row.price) : 'Unavailable' : formatUnitPrice(row.price)}</b></article>)}</div></section>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
         <p className="asset-prices-note">{assetPriceRows.length} symbols</p>
       </dialog>
 
