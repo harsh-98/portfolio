@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import { isConfigured, supabase } from './lib/supabase'
 import { fetchStockPrices } from './lib/stock-prices'
+import { fetchUsdInr } from './lib/fx-rates'
 import type { Account, AssetClass, BrokerageTransaction, LossEvent, Position, Snapshot, SpendTransaction, SyncRun } from './types'
 
 ModuleRegistry.registerModules([AllCommunityModule])
@@ -656,6 +657,45 @@ function Dashboard({ session }: { session: Session }) {
 
   const [stockPriceDelayed, setStockPriceDelayed] = useState(false)
   const positionsRef = useRef<Position[]>([])
+  const [fxQuote, setFxQuote] = useState<{ rate: number; date: string; fetchedAt: string } | null>(null)
+  const [fxError, setFxError] = useState('')
+  const fxAbortRef = useRef<AbortController | null>(null)
+  const refreshFxRate = useCallback(async () => {
+    if (fxAbortRef.current) return
+    const controller = new AbortController()
+    fxAbortRef.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 15000)
+    try {
+      const quote = await fetchUsdInr(controller.signal)
+      if (fxAbortRef.current !== controller) return
+      setFxQuote(quote)
+      setFxError('')
+    } catch (failure) {
+      if (fxAbortRef.current === controller) setFxError(controller.signal.aborted ? 'USD/INR update timed out; showing the last available rate.' : failure instanceof Error ? failure.message : 'Unable to refresh USD/INR.')
+    } finally {
+      window.clearTimeout(timeout)
+      if (fxAbortRef.current === controller) fxAbortRef.current = null
+    }
+  }, [])
+  useEffect(() => {
+    const resume = () => { if (document.visibilityState === 'visible') void refreshFxRate() }
+    void refreshFxRate()
+    const timer = window.setInterval(resume, 300000)
+    document.addEventListener('visibilitychange', resume)
+    window.addEventListener('focus', resume)
+    window.addEventListener('online', resume)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', resume)
+      window.removeEventListener('focus', resume)
+      window.removeEventListener('online', resume)
+      const controller = fxAbortRef.current
+      fxAbortRef.current = null
+      controller?.abort()
+    }
+  }, [refreshFxRate])
+  useEffect(() => { if (showPrices) void refreshFxRate() }, [showPrices, refreshFxRate])
+
   const inrPerUsd = useMemo(() => {
     const indiaPosition = positions.find((position) => position.source_key === 'india:inr')
     const quantity = Number(indiaPosition?.quantity || 0)
@@ -943,23 +983,23 @@ function Dashboard({ session }: { session: Session }) {
       const category: PriceCategory = position.metadata.instrument_type === 'option' || /\b\d{2}\/\d{2}\/\d{4}\s+[\d.]+\s+[CP]$/.test(symbol)
         ? 'Options' : position.asset.asset_class === 'equity' ? 'Equities' : isDigitalAsset(position.asset) ? 'Crypto' : 'Other'
       const key = `${category}:${symbol}`
-      const price = isOverride ? override.price_usd! : Number(position.price_usd)
-      const priority = isOverride ? 3 : quote ? 2 : 1
-      const fetchedAt = Date.parse((isOverride ? override.effective_at : quote?.fetched_at) || position.as_of) || 0
+      const price = isOverride ? override.price_usd! : symbol === 'INR' && fxQuote ? 1 / fxQuote.rate : Number(position.price_usd)
+      const priority = isOverride ? 3 : quote || (symbol === 'INR' && fxQuote) ? 2 : 1
+      const fetchedAt = Date.parse((isOverride ? override.effective_at : symbol === 'INR' && fxQuote ? fxQuote.fetchedAt : quote?.fetched_at) || position.as_of) || 0
       const previous = grouped.get(key)
       if (!previous || priority > previous.priority || (priority === previous.priority && fetchedAt > previous.fetchedAt)) {
         grouped.set(key, { id: key, symbol, category, price, fetchedAt, priority })
       }
     })
     return [...grouped.values()].sort((a, b) => a.symbol.localeCompare(b.symbol))
-  }, [positions])
+  }, [positions, fxQuote])
   const visibleAssetPriceRows = assetPriceRows.filter((row) => (row.symbol === 'INR' ? 'USD/INR' : row.symbol).toLowerCase().includes(priceSearch.toLowerCase()))
   const assetPriceSections = (['Equities', 'Options', 'Crypto', 'Other'] as const)
     .map((category) => ({ category, rows: visibleAssetPriceRows.filter((row) => row.category === category) }))
     .filter((section) => section.rows.length > 0)
   const refreshDisplayedPrices = async () => {
     setPriceRefreshBusy(true)
-    try { await Promise.allSettled([refreshLiveCryptoPrices(), refreshStockPrices()]) }
+    try { await Promise.allSettled([refreshLiveCryptoPrices(), refreshStockPrices(), refreshFxRate()]) }
     finally { setPriceRefreshBusy(false) }
   }
   const formatUnitPrice = (value: number) => !Number.isFinite(value) ? 'Unavailable' : value > 0 && value < 0.000001 ? `$${value.toPrecision(5)}` : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: value < 1 ? 10 : value < 100 ? 6 : 2 }).format(value)
@@ -1320,7 +1360,8 @@ function Dashboard({ session }: { session: Session }) {
         <div className="asset-prices-header"><div><h2 id="asset-prices-title">Prices <small>USD</small></h2></div><button className="asset-prices-close" aria-label="Close asset prices" onClick={() => setShowPrices(false)} autoFocus><X size={18} /></button></div>
         <div className="asset-prices-tools"><input type="search" aria-label="Search asset prices" placeholder="Search symbol" value={priceSearch} onChange={(event) => setPriceSearch(event.target.value)} /><button className="secondary-button" onClick={() => void refreshDisplayedPrices()} disabled={priceRefreshBusy}><RefreshCw size={13} className={priceRefreshBusy ? 'spinning' : ''} />Refresh</button></div>
         {(livePriceDelayed || stockPriceDelayed) && <p className="asset-prices-note" role="status">{livePriceDelayed ? 'Crypto feed delayed. ' : ''}{stockPriceDelayed ? `${stockPriceError || 'Stock feed delayed.'} ` : ''}Last available prices remain below.</p>}
-        <div className="asset-price-sections">{assetPriceSections.map((section) => <section key={section.category} aria-label={`${section.category} prices`}><h3>{section.category}{section.category === 'Options' && <small>USD / contract</small>}{section.category === 'Equities' && <small>{stockPriceDelayed ? 'delayed' : lastStockPriceAt ? `fetched ${lastStockPriceAt.toLocaleTimeString()}` : 'fetching…'}</small>}</h3><div className="asset-prices-list">{section.rows.map((row) => <article key={row.id} className="asset-price-row"><strong>{row.symbol === 'INR' ? 'USD/INR' : row.symbol}</strong><b>{row.symbol === 'INR' ? Number.isFinite(row.price) && row.price > 0 ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1 / row.price) : 'Unavailable' : formatUnitPrice(row.price)}</b></article>)}</div></section>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
+        {fxError && <p className="asset-prices-note" role="status">{fxError}</p>}
+        <div className="asset-price-sections">{assetPriceSections.map((section) => <section key={section.category} aria-label={`${section.category} prices`}><h3>{section.category}{section.category === 'Options' && <small>USD / contract</small>}{section.category === 'Equities' && <small>{stockPriceDelayed ? 'delayed' : lastStockPriceAt ? `fetched ${lastStockPriceAt.toLocaleTimeString()}` : 'fetching…'}</small>}{section.category === 'Other' && fxQuote && <small>FX · ECB {fxQuote.date}</small>}</h3><div className="asset-prices-list">{section.rows.map((row) => <article key={row.id} className="asset-price-row"><strong>{row.symbol === 'INR' ? 'USD/INR' : row.symbol}</strong><b>{row.symbol === 'INR' ? Number.isFinite(row.price) && row.price > 0 ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1 / row.price) : 'Unavailable' : formatUnitPrice(row.price)}</b></article>)}</div></section>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
         <p className="asset-prices-note">{assetPriceRows.length} symbols</p>
       </dialog>
 
