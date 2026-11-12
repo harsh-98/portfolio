@@ -149,7 +149,10 @@ function formatPnlPercent(value: number | null) {
 
 function realizedPnlPercent(transactions: BrokerageTransaction[]): number | null {
   const rows = transactions.filter((transaction) => transaction.realized_pnl_usd != null)
-  if (!rows.length || rows.some((row) => !(Number(row.metadata?.purchase_value_usd) > 0))) return null
+  if (!rows.length || rows.some((row) => {
+    const cost = row.metadata?.purchase_value_usd
+    return cost == null || !Number.isFinite(Number(cost)) || Number(cost) < 0
+  })) return null
   const cost = rows.reduce((sum, row) => sum + Number(row.metadata?.purchase_value_usd), 0)
   const pnl = rows.reduce((sum, row) => sum + Number(row.realized_pnl_usd), 0)
   return pnlPercent(pnl, cost)
