@@ -63,6 +63,7 @@ export interface BrokerageTransaction {
   price_usd: number | null
   amount_usd: number | null
   realized_pnl_usd: number | null
+  metadata?: Record<string, unknown> | null
   account: Pick<Account, 'name' | 'institution'> | null
   asset: Pick<Asset, 'symbol' | 'name'> | null
 }

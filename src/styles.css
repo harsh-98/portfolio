@@ -679,3 +679,10 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .stock-price-status span { min-width: 0; }
 .stock-price-status.delayed { color: #d7ad77; }
 .stock-price-status button { flex-shrink: 0; border: 0; background: transparent; padding: 3px 0 3px 4px; color: #8ed0ab; font-size: 8px; cursor: pointer; }
+
+.equity-pnl-strip em { font: normal 8px 'DM Mono', monospace; }
+.grid-pnl { height: 100%; display: grid; align-content: center; line-height: 1.15; white-space: nowrap; }
+.grid-pnl b { font-size: 10px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.grid-pnl small { font-size: 8px; opacity: .85; }
+.equity-drilldown .pnl-return { display: block; color: inherit; font-size: 8px; font-style: normal; margin-top: 2px; }
+@media (max-width: 700px) { .equity-grid .grid-pnl b { font-size: 9px; } .equity-grid .grid-pnl small, .equity-pnl-strip em { font-size: 7px; } }

@@ -80,7 +80,9 @@ type EquityGridRow = {
   averageBuy: number | null
   value: number
   pnl: number | null
+  pnlPercent: number | null
   realizedPnl: number | null
+  realizedPnlPercent: number | null
   allocation: number
 }
 
@@ -135,6 +137,22 @@ function formatMoney(value: number) {
 
 function formatMoneyCents(value: number) {
   return moneyCents.format(Number.isFinite(value) ? value : 0)
+}
+
+function pnlPercent(pnl: number, cost: number): number | null {
+  return Number.isFinite(pnl) && Number.isFinite(cost) && cost > 0 ? pnl / cost * 100 : null
+}
+
+function formatPnlPercent(value: number | null) {
+  return value == null ? '—' : `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`
+}
+
+function realizedPnlPercent(transactions: BrokerageTransaction[]): number | null {
+  const rows = transactions.filter((transaction) => transaction.realized_pnl_usd != null)
+  if (!rows.length || rows.some((row) => !(Number(row.metadata?.purchase_value_usd) > 0))) return null
+  const cost = rows.reduce((sum, row) => sum + Number(row.metadata?.purchase_value_usd), 0)
+  const pnl = rows.reduce((sum, row) => sum + Number(row.realized_pnl_usd), 0)
+  return pnlPercent(pnl, cost)
 }
 
 function formatAmount(value: number) {
@@ -752,7 +770,7 @@ function Dashboard({ session }: { session: Session }) {
         supabase.from('accounts').select('*').order('name').abortSignal(controller.signal),
         supabase.from('portfolio_snapshots').select('*').order('snapshot_date', { ascending: true }).limit(90).abortSignal(controller.signal),
         supabase.from('sync_runs').select('id,source,status,records_written,message,started_at,finished_at').order('started_at', { ascending: false }).limit(20).abortSignal(controller.signal),
-        supabase.from('brokerage_transactions').select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,account:accounts(name,institution),asset:assets(symbol,name)').order('event_time', { ascending: false }).limit(1000).abortSignal(controller.signal),
+        supabase.from('brokerage_transactions').select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,metadata,account:accounts(name,institution),asset:assets(symbol,name)').order('event_time', { ascending: false }).limit(1000).abortSignal(controller.signal),
         supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status,transaction_type,metadata').order('occurred_at', { ascending: false }).limit(5000).abortSignal(controller.signal),
         supabase.from('loss_events').select('id,event_key,event_at,date_precision,title,category,status,loss_low_usd,loss_high_usd,details').order('event_at', { ascending: false, nullsFirst: false }).abortSignal(controller.signal),
       ])
@@ -1108,10 +1126,10 @@ function Dashboard({ session }: { session: Session }) {
     }
   }, [positions, cryptoExposure])
   const equityExposure = useMemo(() => {
-    const grouped = new Map<string, { symbol: string; name: string; value: number; quantity: number; costBasis: number; pricedCost: number; pricedValue: number; pricedQuantity: number; breakdown: Map<string, { value: number; quantity: number; costBasis: number }> }>()
+    const grouped = new Map<string, { symbol: string; name: string; value: number; quantity: number; costBasis: number; pricedCost: number; pricedValue: number; pricedQuantity: number; breakdown: Map<string, { value: number; quantity: number; costBasis: number; pricedValue: number; pricedQuantity: number }> }>()
     equityPositions.forEach((position) => {
       const symbol = canonicalEquitySymbol(position.asset.symbol)
-      const current = grouped.get(symbol) || { symbol, name: symbol === 'GOOGL' ? 'Alphabet' : position.asset.name, value: 0, quantity: 0, costBasis: 0, pricedCost: 0, pricedValue: 0, pricedQuantity: 0, breakdown: new Map<string, { value: number; quantity: number; costBasis: number }>() }
+      const current = grouped.get(symbol) || { symbol, name: symbol === 'GOOGL' ? 'Alphabet' : position.asset.name, value: 0, quantity: 0, costBasis: 0, pricedCost: 0, pricedValue: 0, pricedQuantity: 0, breakdown: new Map<string, { value: number; quantity: number; costBasis: number; pricedValue: number; pricedQuantity: number }>() }
       const value = Number(position.value_usd)
       const quantity = Number(position.quantity)
       const costBasis = position.cost_basis_usd == null ? 0 : Number(position.cost_basis_usd)
@@ -1124,10 +1142,11 @@ function Dashboard({ session }: { session: Session }) {
         current.pricedQuantity += quantity
       }
       const venue = positionPlatform(position)
-      const detail = current.breakdown.get(venue) || { value: 0, quantity: 0, costBasis: 0 }
+      const detail = current.breakdown.get(venue) || { value: 0, quantity: 0, costBasis: 0, pricedValue: 0, pricedQuantity: 0 }
       detail.value += value
       detail.quantity += quantity
       detail.costBasis += costBasis
+      if (position.cost_basis_usd != null) { detail.pricedValue += value; detail.pricedQuantity += quantity }
       current.breakdown.set(venue, detail)
       grouped.set(symbol, current)
     })
@@ -1135,6 +1154,7 @@ function Dashboard({ session }: { session: Session }) {
   }, [equityPositions])
   const stockCostBasis = equityExposure.reduce((sum, asset) => sum + asset.pricedCost, 0)
   const stockPnl = equityExposure.reduce((sum, asset) => sum + asset.pricedValue - asset.pricedCost, 0)
+  const stockPnlPercent = pnlPercent(stockPnl, stockCostBasis)
   const equityGridRows = useMemo<EquityGridRow[]>(() => equityExposure.map((asset) => ({
     quantity: asset.quantity,
     symbol: asset.symbol,
@@ -1143,6 +1163,8 @@ function Dashboard({ session }: { session: Session }) {
     averageBuy: asset.pricedQuantity && asset.pricedCost ? asset.pricedCost / asset.pricedQuantity : null,
     value: asset.value,
     pnl: asset.pricedQuantity ? asset.pricedValue - asset.pricedCost : null,
+    pnlPercent: pnlPercent(asset.pricedValue - asset.pricedCost, asset.pricedCost),
+    realizedPnlPercent: realizedPnlPercent(brokerageTransactions.filter((transaction) => transaction.asset?.symbol && canonicalEquitySymbol(transaction.asset.symbol) === asset.symbol)),
     realizedPnl: brokerageTransactions.some((transaction) => transaction.asset?.symbol && canonicalEquitySymbol(transaction.asset.symbol) === asset.symbol && transaction.realized_pnl_usd != null)
       ? brokerageTransactions.filter((transaction) => transaction.asset?.symbol && canonicalEquitySymbol(transaction.asset.symbol) === asset.symbol).reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
       : null,
@@ -1152,8 +1174,8 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'symbol', headerName: compactStocks ? 'Asset' : 'Asset / venue', minWidth: compactStocks ? 58 : 105, flex: 1.8, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
     { field: 'averageBuy', headerName: compactStocks ? 'Avg' : 'Avg buy', minWidth: compactStocks ? 42 : 60, flex: .8, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
     { field: 'value', headerName: compactStocks ? 'Value' : 'Value / units', minWidth: compactStocks ? 65 : 85, flex: 1.1, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)), cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset grid-value"><strong>{formatMoney(data.value)}</strong><small>({formatAmount(data.quantity)} units)</small></span> : null },
-    { field: 'pnl', headerName: compactStocks ? 'Unreal.' : 'Unrealized', minWidth: compactStocks ? 56 : 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
-    { field: 'realizedPnl', headerName: compactStocks ? 'Real.' : 'Realized', minWidth: compactStocks ? 56 : 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
+    { field: 'pnl', headerName: compactStocks ? 'Unreal.' : 'Unrealized', minWidth: compactStocks ? 56 : 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellRenderer: ({ data }: { data?: EquityGridRow }) => data?.pnl == null ? '—' : <span className="grid-pnl"><b>{data.pnl >= 0 ? '+' : ''}{formatMoney(data.pnl)}</b><small title="P/L as a percentage of recorded purchase cost">{formatPnlPercent(data.pnlPercent)}</small></span>, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
+    { field: 'realizedPnl', headerName: compactStocks ? 'Real.' : 'Realized', minWidth: compactStocks ? 56 : 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellRenderer: ({ data }: { data?: EquityGridRow }) => data?.realizedPnl == null ? '—' : <span className="grid-pnl"><b>{data.realizedPnl >= 0 ? '+' : ''}{formatMoney(data.realizedPnl)}</b><small title="P/L as a percentage of recorded purchase cost">{formatPnlPercent(data.realizedPnlPercent)}</small></span>, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'allocation', headerName: compactStocks ? '%' : 'Alloc.', minWidth: compactStocks ? 30 : 50, flex: .6, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
   ], [compactStocks, formatMoney, formatMoneyCents])
   const brokerageByAsset = useMemo(() => {
@@ -1237,6 +1259,7 @@ function Dashboard({ session }: { session: Session }) {
       : [...(compositionPoint.assets.get(selectedCryptoPlatform)?.values() || [])].map((asset) => ({ platform: asset.label, value: asset.value, quantity: asset.quantity, start: firstRangeCryptoPoint?.assets.get(selectedCryptoPlatform)?.get(asset.label)?.value || 0 })).sort((a, b) => b.value - a.value)
     : []
   const realizedXtb = brokerageTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
+  const realizedXtbPercent = realizedPnlPercent(brokerageTransactions)
   const cardBalances = positions.filter((position) => { const source = cardSourceForPosition(position); return source && selectedCardSources.includes(source) }).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
   const cardBalanceTotal = cardBalances.reduce((sum, position) => sum + Number(position.value_usd), 0)
   const spendMonths = [...new Set(spendTransactions.map((transaction) => transaction.occurred_at.slice(0, 7)))].sort()
@@ -1422,7 +1445,7 @@ function Dashboard({ session }: { session: Session }) {
                 </article>
 
                 <article className={overviewPanelClass('equities', 'overview-equities')}>
-                  <div className="panel-heading"><div><p className="eyebrow">STOCKS &amp; ETFS</p><h2>{formatMoney(equities)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={stockPnl >= 0 ? 'value-positive' : 'value-negative'}>{stockPnl >= 0 ? '+' : ''}{formatMoney(stockPnl)}</strong></span><span><small>Realized</small><strong className={realizedXtb >= 0 ? 'value-positive' : 'value-negative'}>{realizedXtb >= 0 ? '+' : ''}{formatMoney(realizedXtb)}</strong></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'equities' ? null : 'equities')} aria-label="Expand stocks and ETFs">{expandedPanel === 'equities' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="panel-heading"><div><p className="eyebrow">STOCKS &amp; ETFS</p><h2>{formatMoney(equities)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={stockPnl >= 0 ? 'value-positive' : 'value-negative'}>{stockPnl >= 0 ? '+' : ''}{formatMoney(stockPnl)}</strong><em className={stockPnl >= 0 ? 'value-positive' : 'value-negative'}>{formatPnlPercent(stockPnlPercent)}</em></span><span><small>Realized</small><strong className={realizedXtb >= 0 ? 'value-positive' : 'value-negative'}>{realizedXtb >= 0 ? '+' : ''}{formatMoney(realizedXtb)}</strong><em className={realizedXtb >= 0 ? 'value-positive' : 'value-negative'}>{formatPnlPercent(realizedXtbPercent)}</em></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'equities' ? null : 'equities')} aria-label="Expand stocks and ETFs">{expandedPanel === 'equities' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className={`stock-price-status ${stockPriceDelayed ? 'delayed' : ''}`} role="status"><span>{stockPriceError || (lastStockPriceAt ? `Prices fetched ${lastStockPriceAt.toLocaleTimeString()} · refresh every 1m` : 'Fetching stock prices…')}</span><button type="button" onClick={() => void refreshStockPrices()}>{stockPriceDelayed ? 'Retry' : 'Refresh prices'}</button></div>
                   <div className="equity-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={equityGridRows} columnDefs={equityColumns} defaultColDef={{ sortable: true, resizable: true, suppressHeaderFilterButton: compactStocks }} getRowId={({ data }) => data.symbol} rowHeight={34} headerHeight={30} onRowClicked={({ data }) => data && setExpandedEquity(data.symbol)} /></div>
                   <div className="equity-footer"><span>{equityExposure.length} securities · {formatMoney(stockCostBasis)} known cost</span><span>{brokerageTransactions.length ? 'Realized P/L from XTB history' : 'Realized P/L unavailable'}</span></div>
@@ -1438,12 +1461,12 @@ function Dashboard({ session }: { session: Session }) {
                       <div className="drilldown-head"><span><i /><strong>{asset.symbol} · {asset.name}</strong><small>Position by platform · choose a venue for transaction history</small></span><button onClick={() => setExpandedEquity(null)} aria-label="Close position detail"><X size={14} /></button></div>
                       <div className="equity-drilldown-summary">
                         <span><small>Current value</small><strong>{formatMoney(asset.value)}</strong></span>
-                        <span><small>Unrealized P/L</small><strong className={asset.pricedQuantity ? (assetUnrealizedPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{asset.pricedQuantity ? `${assetUnrealizedPnl >= 0 ? '+' : ''}${formatMoney(assetUnrealizedPnl)}` : '—'}</strong></span>
-                        <span><small>Realized P/L</small><strong className={assetRealizedRows.length ? (assetRealizedPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{assetRealizedRows.length ? `${assetRealizedPnl >= 0 ? '+' : ''}${formatMoney(assetRealizedPnl)}` : '—'}</strong></span>
+                        <span><small>Unrealized P/L</small><strong className={asset.pricedQuantity ? (assetUnrealizedPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{asset.pricedQuantity ? `${assetUnrealizedPnl >= 0 ? '+' : ''}${formatMoney(assetUnrealizedPnl)}` : '—'}<span className="pnl-return">{formatPnlPercent(pnlPercent(assetUnrealizedPnl, asset.pricedCost))}</span></strong></span>
+                        <span><small>Realized P/L</small><strong className={assetRealizedRows.length ? (assetRealizedPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{assetRealizedRows.length ? `${assetRealizedPnl >= 0 ? '+' : ''}${formatMoney(assetRealizedPnl)}` : '—'}<span className="pnl-return">{formatPnlPercent(realizedPnlPercent(assetRealizedRows))}</span></strong></span>
                       </div>
                       <div className="equity-breakdown-labels"><span>Platform</span><span>Quantity / average</span><span>Value</span><span>Unrealized</span><span>Realized</span><span /></div>
                       <div className="asset-breakdown equity-breakdown">{details.map(([name, detail]) => {
-                        const detailPnl = detail.value - detail.costBasis
+                        const detailPnl = detail.pricedValue - detail.costBasis
                         const venueTransactions = assetTransactions.filter((transaction) => transaction.account && platformIdentity(transaction.account) === name)
                         const venueRealizedRows = venueTransactions.filter((transaction) => transaction.realized_pnl_usd != null)
                         const venueRealizedPnl = venueRealizedRows.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd), 0)
@@ -1451,8 +1474,8 @@ function Dashboard({ session }: { session: Session }) {
                           <span>{name}<small>{venueTransactions.length ? `${venueTransactions.length} transactions · click to open` : 'Position detail only'}</small></span>
                           <span className="equity-quantity"><strong>{formatAmount(detail.quantity)} shares</strong><small>{detail.costBasis ? `Avg ${formatMoneyCents(detail.costBasis / detail.quantity)}` : 'Average cost pending'}</small></span>
                           <b>{formatMoney(detail.value)}</b>
-                          <em className={detail.costBasis ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detail.costBasis ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}</em>
-                          <em className={venueRealizedRows.length ? (venueRealizedPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{venueRealizedRows.length ? `${venueRealizedPnl >= 0 ? '+' : ''}${formatMoney(venueRealizedPnl)}` : '—'}</em>
+                          <em className={detail.costBasis ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detail.costBasis ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}<small className="pnl-return">{formatPnlPercent(pnlPercent(detailPnl, detail.costBasis))}</small></em>
+                          <em className={venueRealizedRows.length ? (venueRealizedPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{venueRealizedRows.length ? `${venueRealizedPnl >= 0 ? '+' : ''}${formatMoney(venueRealizedPnl)}` : '—'}<small className="pnl-return">{formatPnlPercent(realizedPnlPercent(venueRealizedRows))}</small></em>
                           <ChevronRight size={12} />
                         </button>
                       })}</div>
