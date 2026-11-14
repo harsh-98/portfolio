@@ -19,6 +19,8 @@ export interface Asset {
 }
 
 export interface Position {
+  owner_id: string
+  updated_at: string
   id: string
   account_id: string
   asset_id: string
