@@ -192,9 +192,9 @@ function livePriceSymbol(symbol: string) {
   return normalized
 }
 
-async function fetchLiveCryptoPrices() {
+async function fetchLiveCryptoPrices(signal: AbortSignal = AbortSignal.timeout(12000)) {
   const [binanceResult, hyperliquidResult] = await Promise.allSettled([
-    fetch('https://api.binance.com/api/v3/ticker/price').then(async (response) => {
+    fetch('https://api.binance.com/api/v3/ticker/price', { signal }).then(async (response) => {
       if (!response.ok) throw new Error(`Binance ${response.status}`)
       return response.json() as Promise<Array<{ symbol: string; price: string }>>
     }),
@@ -202,6 +202,7 @@ async function fetchLiveCryptoPrices() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'allMids' }),
+      signal,
     }).then(async (response) => {
       if (!response.ok) throw new Error(`Hyperliquid ${response.status}`)
       return response.json() as Promise<Record<string, string>>
@@ -225,6 +226,31 @@ async function fetchLiveCryptoPrices() {
   ;['USDT', 'USDC', 'DAI', 'USDE', 'USD1', 'FRAX', 'LUSD', 'GHO'].forEach((symbol) => prices.set(symbol, { price: 1, source: 'USD parity assumption', kind: 'USD peg' }))
   if (!prices.size) throw new Error('Live crypto feeds unavailable')
   return prices
+}
+
+function applyCryptoQuotes(positions: Position[], prices: Awaited<ReturnType<typeof fetchLiveCryptoPrices>>, fetchedAt: string) {
+  return positions.map((position) => {
+    const assetClass = effectiveAssetClass(position.asset)
+    if (!['crypto', 'stablecoin', 'gold'].includes(assetClass)) return position
+    const override = position.metadata.valuation_override as { price_usd?: number } | undefined
+    if (typeof override?.price_usd === 'number' && Number.isFinite(override.price_usd) && override.price_usd >= 0) {
+      return { ...position, price_usd: override.price_usd, value_usd: Math.round(Number(position.quantity) * override.price_usd * 100) / 100 }
+    }
+    const quoteSymbol = livePriceSymbol(position.asset.symbol)
+    const quote = prices.get(quoteSymbol)
+    if (!quote) return position
+    return { ...position, price_usd: quote.price, value_usd: Math.round(Number(position.quantity) * quote.price * 100) / 100, metadata: { ...position.metadata, market_quote: { source: quote.source, kind: quote.kind, quote_symbol: quoteSymbol, fetched_at: fetchedAt } } }
+  })
+}
+
+function applyStockQuotes(positions: Position[], prices: Map<string, number>, source: string, fetchedAt: string) {
+  return positions.map((position) => {
+    if (position.asset.asset_class !== 'equity') return position
+    const symbol = canonicalEquitySymbol(position.asset.symbol)
+    const price = prices.get(symbol)
+    if (price == null) return position
+    return { ...position, price_usd: price, value_usd: Math.round(Number(position.quantity) * price * 100) / 100, metadata: { ...position.metadata, market_quote: { source, kind: 'Live quote', quote_symbol: symbol, fetched_at: fetchedAt } } }
+  })
 }
 
 function effectiveAssetClass(asset: { symbol: string; asset_class: AssetClass }) {
@@ -664,7 +690,7 @@ function Dashboard({ session }: { session: Session }) {
   const [lastStockPriceAt, setLastStockPriceAt] = useState<Date | null>(null)
   const [stockPriceError, setStockPriceError] = useState('')
   const stockQuoteAbortRef = useRef<AbortController | null>(null)
-  const [positionLoadVersion, setPositionLoadVersion] = useState(0)
+  const cryptoQuoteAbortRef = useRef<AbortController | null>(null)
   const [showPrices, setShowPrices] = useState(false)
   const [priceSearch, setPriceSearch] = useState('')
   const [priceRefreshBusy, setPriceRefreshBusy] = useState(false)
@@ -745,6 +771,10 @@ function Dashboard({ session }: { session: Session }) {
 
   const load = useCallback(async () => {
     loadAbortRef.current?.abort()
+    cryptoQuoteAbortRef.current?.abort()
+    cryptoQuoteAbortRef.current = null
+    stockQuoteAbortRef.current?.abort()
+    stockQuoteAbortRef.current = null
     const controller = new AbortController()
     loadAbortRef.current = controller
     setLoading(true)
@@ -757,14 +787,44 @@ function Dashboard({ session }: { session: Session }) {
     }, 30000)
     try {
       const [positionsResult, accountsResult, snapshotsResult, syncRunsResult, brokerageResult, spendResult, lossEventsResult] = await Promise.all([
-        supabase.from('positions').select('*, account:accounts(*), asset:assets(*)').order('value_usd', { ascending: false }).abortSignal(controller.signal).then((result) => {
+        supabase.from('positions').select('*, account:accounts(*), asset:assets(*)').order('value_usd', { ascending: false }).abortSignal(controller.signal).then(async (result) => {
           if (!controller.signal.aborted) {
             if (result.error) setError(result.error.message)
             else {
+              // Publish holdings only after both opening quote attempts settle. Saved
+              // import marks are a fallback, not the first displayed valuation.
               const loadedPositions = (result.data || []) as unknown as Position[]
-              positionsRef.current = loadedPositions
-              setPositions(loadedPositions)
-              setPositionLoadVersion((version) => version + 1)
+              const symbols = [...new Set(loadedPositions.filter((position) => position.asset.asset_class === 'equity').map((position) => canonicalEquitySymbol(position.asset.symbol)))]
+              const quoteSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(12000)])
+              const [cryptoResult, stockResult] = await Promise.allSettled([
+                fetchLiveCryptoPrices(quoteSignal),
+                symbols.length ? fetchStockPrices(symbols, quoteSignal) : Promise.resolve(null),
+              ])
+              if (controller.signal.aborted) return result
+              const fetchedAt = new Date().toISOString()
+              let valuedPositions = loadedPositions
+              if (cryptoResult.status === 'fulfilled') {
+                valuedPositions = applyCryptoQuotes(valuedPositions, cryptoResult.value, fetchedAt)
+                setLastLivePriceAt(new Date(fetchedAt))
+                setLivePriceDelayed(false)
+              } else {
+                setLivePriceDelayed(true)
+              }
+              if (stockResult.status === 'fulfilled') {
+                if (stockResult.value) {
+                  const { prices, source } = stockResult.value
+                  valuedPositions = applyStockQuotes(valuedPositions, prices, source, fetchedAt)
+                  const missing = symbols.filter((symbol) => !prices.has(symbol))
+                  setLastStockPriceAt(new Date(fetchedAt))
+                  setStockPriceDelayed(missing.length > 0)
+                  setStockPriceError(missing.length ? `No quote for ${missing.join(', ')}. Other stocks updated.` : '')
+                }
+              } else {
+                setStockPriceDelayed(true)
+                setStockPriceError(stockResult.reason instanceof Error ? stockResult.reason.message : 'Stock prices unavailable. Tap Retry.')
+              }
+              positionsRef.current = valuedPositions
+              setPositions(valuedPositions)
             }
             setLoading(false)
           }
@@ -909,38 +969,38 @@ function Dashboard({ session }: { session: Session }) {
   useEffect(() => { positionsRef.current = positions }, [positions])
 
   const refreshLiveCryptoPrices = useCallback(async () => {
+    if (cryptoQuoteAbortRef.current || loadAbortRef.current || !positionsRef.current.length) return
+    const controller = new AbortController()
+    cryptoQuoteAbortRef.current = controller
+    const timeout = window.setTimeout(() => controller.abort(), 12000)
     try {
-      const prices = await fetchLiveCryptoPrices()
+      const prices = await fetchLiveCryptoPrices(controller.signal)
+      if (cryptoQuoteAbortRef.current !== controller) return
       const fetchedAt = new Date().toISOString()
-      setPositions((current) => current.map((position) => {
-        const assetClass = effectiveAssetClass(position.asset)
-        if (!['crypto', 'stablecoin', 'gold'].includes(assetClass)) return position
-        const override = position.metadata.valuation_override as { price_usd?: number } | undefined
-        if (typeof override?.price_usd === 'number' && Number.isFinite(override.price_usd) && override.price_usd >= 0) {
-          return { ...position, price_usd: override.price_usd, value_usd: Math.round(Number(position.quantity) * override.price_usd * 100) / 100 }
-        }
-        const quoteSymbol = livePriceSymbol(position.asset.symbol)
-        const quote = prices.get(quoteSymbol)
-        if (!quote) return position
-        return { ...position, price_usd: quote.price, value_usd: Math.round(Number(position.quantity) * quote.price * 100) / 100, metadata: { ...position.metadata, market_quote: { source: quote.source, kind: quote.kind, quote_symbol: quoteSymbol, fetched_at: fetchedAt } } }
-      }))
+      setPositions((current) => applyCryptoQuotes(current, prices, fetchedAt))
       setLastLivePriceAt(new Date())
       setLivePriceDelayed(false)
     } catch {
-      setLivePriceDelayed(true)
+      if (cryptoQuoteAbortRef.current === controller) setLivePriceDelayed(true)
+    } finally {
+      window.clearTimeout(timeout)
+      if (cryptoQuoteAbortRef.current === controller) cryptoQuoteAbortRef.current = null
     }
   }, [])
 
   useEffect(() => {
-    void refreshLiveCryptoPrices()
     const timer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void refreshLiveCryptoPrices()
+      if (document.visibilityState === 'visible' && !loadAbortRef.current && positionsRef.current.length) void refreshLiveCryptoPrices()
     }, 5000)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearInterval(timer)
+      cryptoQuoteAbortRef.current?.abort()
+      cryptoQuoteAbortRef.current = null
+    }
   }, [refreshLiveCryptoPrices])
 
   const refreshStockPrices = useCallback(async () => {
-    if (stockQuoteAbortRef.current) return
+    if (stockQuoteAbortRef.current || loadAbortRef.current) return
     const symbols = [...new Set(positionsRef.current
       .filter((position) => position.asset.asset_class === 'equity')
       .map((position) => canonicalEquitySymbol(position.asset.symbol)))]
@@ -952,13 +1012,7 @@ function Dashboard({ session }: { session: Session }) {
       const { prices, source } = await fetchStockPrices(symbols, controller.signal)
       if (stockQuoteAbortRef.current !== controller) return
       const fetchedAt = new Date().toISOString()
-      setPositions((current) => current.map((position) => {
-        if (position.asset.asset_class !== 'equity') return position
-        const symbol = canonicalEquitySymbol(position.asset.symbol)
-        const price = prices.get(symbol)
-        if (price == null) return position
-        return { ...position, price_usd: price, value_usd: Math.round(Number(position.quantity) * price * 100) / 100, metadata: { ...position.metadata, market_quote: { source, kind: 'Live quote', quote_symbol: symbol, fetched_at: fetchedAt } } }
-      }))
+      setPositions((current) => applyStockQuotes(current, prices, source, fetchedAt))
       const missing = symbols.filter((symbol) => !prices.has(symbol))
       setLastStockPriceAt(new Date(fetchedAt))
       setStockPriceDelayed(missing.length > 0)
@@ -972,10 +1026,6 @@ function Dashboard({ session }: { session: Session }) {
       if (stockQuoteAbortRef.current === controller) stockQuoteAbortRef.current = null
     }
   }, [])
-
-  useEffect(() => {
-    if (positionLoadVersion) void refreshStockPrices()
-  }, [positionLoadVersion, refreshStockPrices])
 
   useEffect(() => {
     const resume = () => { if (document.visibilityState === 'visible') void refreshStockPrices() }
@@ -1406,12 +1456,13 @@ function Dashboard({ session }: { session: Session }) {
             <div className="heading-actions"><button className="secondary-button" onClick={() => { void load(); if (view === 'crypto') void loadHistory(true) }} disabled={loading || (view === 'crypto' && historyLoading)}><RefreshCw size={16} className={loading || (view === 'crypto' && historyLoading) ? 'spinning' : ''} />Refresh</button>{view === 'holdings' && <button className="primary-button compact" onClick={() => setShowHoldingForm(true)}><Plus size={17} />Add holding</button>}</div>
           </div>}
 
+          {!loading && (livePriceDelayed || stockPriceDelayed) && <div className="error-banner" role="status"><AlertTriangle size={18} /><span>Some prices could not be refreshed. Total includes last saved prices and may change when the feed recovers.</span></div>}
           {error && <div className="error-banner"><ShieldCheck size={18} /><span>{error}</span></div>}
 
           {view === 'overview' && (
             <section className="overview-dashboard">
               <div className="overview-kpis">
-                <article className="wealth-strip"><section><span>Net worth</span><strong>{loading ? '—' : formatMoney(total)}</strong></section><section><span>Cash available</span><strong>{formatMoney(liquid)}</strong><small>{total ? `${((liquid / total) * 100).toFixed(1)}%` : '—'}</small></section><section><span>Invested</span><strong>{formatMoney(total - liquid)}</strong><small>{total ? `${(((total - liquid) / total) * 100).toFixed(1)}%` : '—'}</small></section><p className={previous && change < 0 ? 'negative' : 'positive'}>{previous ? (change >= 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />) : <ShieldCheck size={12} />}{snapshotMessage}</p></article>
+                <article className="wealth-strip"><section><span>Net worth</span><strong>{loading ? '—' : formatMoney(total)}</strong>{loading && <small role="status">Updating prices…</small>}</section><section><span>Cash available</span><strong>{loading ? '—' : formatMoney(liquid)}</strong><small>{total ? `${((liquid / total) * 100).toFixed(1)}%` : '—'}</small></section><section><span>Invested</span><strong>{loading ? '—' : formatMoney(total - liquid)}</strong><small>{total ? `${(((total - liquid) / total) * 100).toFixed(1)}%` : '—'}</small></section><p className={previous && change < 0 ? 'negative' : 'positive'}>{previous ? (change >= 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />) : <ShieldCheck size={12} />}{snapshotMessage}</p></article>
               </div>
 
               <div className="overview-grid">
