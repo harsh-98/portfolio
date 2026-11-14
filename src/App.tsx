@@ -28,6 +28,7 @@ import {
 } from 'lucide-react'
 import { isConfigured, supabase } from './lib/supabase'
 import { fetchStockPrices } from './lib/stock-prices'
+import { fetchLiveCryptoPrices } from './lib/crypto-prices'
 import { saveMarketPrices } from './lib/save-market-prices'
 import { fetchUsdInr } from './lib/fx-rates'
 import type { Account, AssetClass, BrokerageTransaction, LossEvent, Position, Snapshot, SpendTransaction, SyncRun } from './types'
@@ -193,42 +194,6 @@ function livePriceSymbol(symbol: string) {
   return normalized
 }
 
-async function fetchLiveCryptoPrices(signal: AbortSignal = AbortSignal.timeout(12000)) {
-  const [binanceResult, hyperliquidResult] = await Promise.allSettled([
-    fetch('https://api.binance.com/api/v3/ticker/price', { signal }).then(async (response) => {
-      if (!response.ok) throw new Error(`Binance ${response.status}`)
-      return response.json() as Promise<Array<{ symbol: string; price: string }>>
-    }),
-    fetch('https://api.hyperliquid.xyz/info', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'allMids' }),
-      signal,
-    }).then(async (response) => {
-      if (!response.ok) throw new Error(`Hyperliquid ${response.status}`)
-      return response.json() as Promise<Record<string, string>>
-    }),
-  ])
-  if (binanceResult.status === 'rejected' && hyperliquidResult.status === 'rejected') throw new Error('Live crypto feeds unavailable')
-  const prices = new Map<string, { price: number; source: string; kind: string }>()
-  if (binanceResult.status === 'fulfilled') {
-    binanceResult.value.forEach(({ symbol, price }) => {
-      if (!symbol.endsWith('USDT')) return
-      const value = Number(price)
-      if (Number.isFinite(value) && value > 0) prices.set(symbol.slice(0, -4), { price: value, source: 'Binance (USDT)', kind: 'Live quote' })
-    })
-  }
-  if (hyperliquidResult.status === 'fulfilled') {
-    Object.entries(hyperliquidResult.value).forEach(([symbol, rawPrice]) => {
-      const value = Number(rawPrice)
-      if (Number.isFinite(value) && value > 0) prices.set(symbol.toUpperCase(), { price: value, source: 'Hyperliquid', kind: 'Live quote' })
-    })
-  }
-  if (!prices.size) throw new Error('Live crypto feeds unavailable')
-  ;['USDT', 'USDC', 'DAI', 'USDE', 'USD1', 'FRAX', 'LUSD', 'GHO'].forEach((symbol) => prices.set(symbol, { price: 1, source: 'USD parity assumption', kind: 'USD peg' }))
-  if (!prices.size) throw new Error('Live crypto feeds unavailable')
-  return prices
-}
 
 function applyCryptoQuotes(positions: Position[], prices: Awaited<ReturnType<typeof fetchLiveCryptoPrices>>, fetchedAt: string) {
   return positions.map((position) => {
