@@ -694,3 +694,20 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .topbar { height: auto; min-height: 58px; padding-top: 6px; padding-bottom: 6px; grid-template-columns: auto minmax(0, 1fr); gap: 8px; }
   .topbar-actions { min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 }
+
+.portfolio-sparkline { min-width: 0; padding: 3px 10px; display: grid; grid-template-rows: 15px minmax(0, 1fr) 10px; gap: 1px; }
+.portfolio-sparkline-heading, .portfolio-sparkline-caption { display: flex; align-items: center; justify-content: space-between; gap: 5px; min-width: 0; }
+.portfolio-sparkline-heading > span { color: #7e8a92; font-size: 8px; }
+.portfolio-sparkline-heading > div { display: flex; gap: 3px; }
+.portfolio-sparkline button { border: 1px solid #29333a; border-radius: 3px; padding: 1px 4px; color: #7e8a92; background: transparent; font: 7px 'DM Mono', monospace; cursor: pointer; }
+.portfolio-sparkline button[aria-pressed="true"] { color: var(--green); background: #15271e; border-color: #315b47; }
+.portfolio-sparkline svg { width: 100%; height: 100%; min-height: 0; color: var(--green); touch-action: pan-y; cursor: crosshair; }
+.portfolio-sparkline svg:focus-visible { outline: 1px solid var(--green); border-radius: 3px; }
+.portfolio-sparkline-caption { font: 7px 'DM Mono', monospace; color: #7e8a92; }
+.portfolio-sparkline-caption strong { color: #cdd5d9; font-weight: 500; }
+.portfolio-sparkline-empty { grid-row: 2 / 4; align-self: center; color: #7e8a92; font-size: 8px; }
+@media (max-width: 1000px) {
+  .wealth-strip { height: auto; }
+  .wealth-strip > section { min-height: 60px; }
+  .portfolio-sparkline { grid-column: 1 / -1; height: 62px; border-top: 1px solid var(--line); padding: 5px 10px; }
+}

@@ -6,8 +6,6 @@ import { Area, AreaChart, Brush, CartesianGrid, ReferenceLine, ResponsiveContain
 import {
   Activity,
   AlertTriangle,
-  ArrowDownRight,
-  ArrowUpRight,
   BarChart3,
   ChevronDown,
   ChevronLeft,
@@ -26,6 +24,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
+import { PortfolioSparkline } from './PortfolioSparkline'
 import { isConfigured, supabase } from './lib/supabase'
 import { fetchStockPrices } from './lib/stock-prices'
 import { fetchLiveCryptoPrices } from './lib/crypto-prices'
@@ -592,7 +591,7 @@ function Dashboard({ session }: { session: Session }) {
   const [showPasswordSettings, setShowPasswordSettings] = useState(false)
   const [positions, setPositions] = useState<Position[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([])
+  const [snapshots, setSnapshots] = useState<Array<Pick<Snapshot, 'snapshot_date' | 'total_value_usd'>>>([])
   const [historyPayload, setHistoryPayload] = useState<HistoryChartPayload | null>(null)
   const [selectedHistoryDate, setSelectedHistoryDate] = useState<string | null>(null)
   const [selectedHistoryComposition, setSelectedHistoryComposition] = useState<HistoryComposition | null>(null)
@@ -802,7 +801,7 @@ function Dashboard({ session }: { session: Session }) {
           return result
         }),
         supabase.from('accounts').select('*').order('name').abortSignal(controller.signal),
-        supabase.from('portfolio_snapshots').select('*').order('snapshot_date', { ascending: true }).limit(90).abortSignal(controller.signal),
+        supabase.from('portfolio_snapshots').select('snapshot_date,total_value_usd').gte('snapshot_date', new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10)).order('snapshot_date', { ascending: true }).limit(367).abortSignal(controller.signal),
         supabase.from('sync_runs').select('id,source,status,records_written,message,started_at,finished_at').order('started_at', { ascending: false }).limit(20).abortSignal(controller.signal),
         supabase.from('brokerage_transactions').select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,metadata,account:accounts(name,institution),asset:assets(symbol,name)').order('event_time', { ascending: false }).limit(1000).abortSignal(controller.signal),
         supabase.from('spend_transactions').select('id,source,occurred_at,merchant,description,amount_usd,category,status,transaction_type,metadata').order('occurred_at', { ascending: false }).limit(5000).abortSignal(controller.signal),
@@ -812,7 +811,7 @@ function Dashboard({ session }: { session: Session }) {
       const failure = positionsResult.error || accountsResult.error || snapshotsResult.error || syncRunsResult.error || brokerageResult.error || spendResult.error || lossEventsResult.error
       if (failure) setError(failure.message)
       setAccounts((accountsResult.data || []) as Account[])
-      setSnapshots((snapshotsResult.data || []) as Snapshot[])
+      setSnapshots((snapshotsResult.data || []) as Array<Pick<Snapshot, 'snapshot_date' | 'total_value_usd'>>)
       setSyncRuns((syncRunsResult.data || []) as SyncRun[])
       setBrokerageTransactions((brokerageResult.data || []) as unknown as BrokerageTransaction[])
       setSpendTransactions((spendResult.data || []) as SpendTransaction[])
@@ -1347,15 +1346,6 @@ function Dashboard({ session }: { session: Session }) {
   const recentSpendTotal = recentPurchases.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
   const recentRefundTotal = recentRefunds.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
   const recentCashbackTotal = recentCashback.reduce((sum, transaction) => sum + Math.abs(Number(transaction.amount_usd)), 0)
-  const latestSnapshot = snapshots.length ? snapshots[snapshots.length - 1] : null
-  const previous = snapshots.length > 1 ? snapshots[snapshots.length - 2].total_value_usd : null
-  const change = previous ? total - previous : 0
-  const changePercent = previous ? (change / previous) * 100 : 0
-  const snapshotMessage = previous
-    ? `${formatMoney(Math.abs(change))} (${Math.abs(changePercent).toFixed(2)}%) since prior snapshot`
-    : latestSnapshot
-      ? `Baseline captured ${new Date(`${latestSnapshot.snapshot_date}T00:00:00`).toLocaleDateString([], { dateStyle: 'medium' })}`
-      : 'No snapshot captured yet'
   const filteredPositions = positions.filter((position) => {
     const query = search.toLowerCase()
     return [position.asset.symbol, position.asset.name, position.account.name, position.account.institution].some((value) => value.toLowerCase().includes(query))
@@ -1482,7 +1472,7 @@ function Dashboard({ session }: { session: Session }) {
           {view === 'overview' && (
             <section className="overview-dashboard">
               <div className="overview-kpis">
-                <article className="wealth-strip"><section><span>Net worth</span><strong>{loading ? '—' : formatMoney(total)}</strong>{loading && <small role="status">Updating prices…</small>}</section><section><span>Cash available</span><strong>{loading ? '—' : formatMoney(liquid)}</strong><small>{total ? `${((liquid / total) * 100).toFixed(1)}%` : '—'}</small></section><section><span>Invested</span><strong>{loading ? '—' : formatMoney(total - liquid)}</strong><small>{total ? `${(((total - liquid) / total) * 100).toFixed(1)}%` : '—'}</small></section><p className={previous && change < 0 ? 'negative' : 'positive'}>{previous ? (change >= 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />) : <ShieldCheck size={12} />}{snapshotMessage}</p></article>
+                <article className="wealth-strip"><section><span>Net worth</span><strong>{loading ? '—' : formatMoney(total)}</strong>{loading && <small role="status">Updating prices…</small>}</section><section><span>Cash available</span><strong>{loading ? '—' : formatMoney(liquid)}</strong><small>{total ? `${((liquid / total) * 100).toFixed(1)}%` : '—'}</small></section><section><span>Invested</span><strong>{loading ? '—' : formatMoney(total - liquid)}</strong><small>{total ? `${(((total - liquid) / total) * 100).toFixed(1)}%` : '—'}</small></section><PortfolioSparkline snapshots={snapshots} formatMoney={formatMoney} /></article>
               </div>
 
               <div className="overview-grid">
