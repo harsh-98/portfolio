@@ -711,3 +711,10 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .wealth-strip > section { min-height: 60px; }
   .portfolio-sparkline { grid-column: 1 / -1; height: 62px; border-top: 1px solid var(--line); padding: 5px 10px; }
 }
+.portfolio-sparkline { grid-template-rows: 15px minmax(0, 1fr) 17px; }
+.portfolio-sparkline-caption { display: grid; grid-template-columns: 17px minmax(0, 1fr) 17px; gap: 4px; }
+.portfolio-sparkline-readout { display: flex; align-items: center; justify-content: space-between; gap: 5px; min-width: 0; }
+.portfolio-sparkline-readout span { font-size: 8px; white-space: nowrap; }
+.portfolio-sparkline-readout strong { color: #e3ece7; font-size: 9px; white-space: nowrap; }
+.portfolio-sparkline-caption button { padding: 0; height: 17px; font: 14px/14px sans-serif; color: #a9d8bf; touch-action: manipulation; }
+.portfolio-sparkline-caption button:disabled { opacity: .3; cursor: default; }
