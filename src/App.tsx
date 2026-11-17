@@ -25,6 +25,7 @@ import {
   X,
 } from 'lucide-react'
 import { PortfolioSparkline } from './PortfolioSparkline'
+import { RiskPage } from './RiskPage'
 import { isConfigured, supabase } from './lib/supabase'
 import { fetchStockPrices } from './lib/stock-prices'
 import { fetchLiveCryptoPrices } from './lib/crypto-prices'
@@ -99,7 +100,7 @@ const classMeta: Record<AssetClass, { label: string; color: string }> = {
   liability: { label: 'Liabilities', color: '#9b4b43' },
 }
 
-type View = 'overview' | 'crypto' | 'losses' | 'holdings' | 'activity'
+type View = 'overview' | 'crypto' | 'losses' | 'holdings' | 'activity' | 'risk'
 type OverviewPanel = 'platforms' | 'allocation' | 'digital' | 'equities' | 'spending'
 type DisplayCurrency = 'USD' | 'INR'
 type PriceCategory = 'Equities' | 'Options' | 'Crypto' | 'Other'
@@ -585,7 +586,8 @@ function HoldingForm({ accounts, onClose, onSaved }: HoldingFormProps) {
 }
 
 function Dashboard({ session }: { session: Session }) {
-  const [view, setView] = useState<View>('overview')
+  const [view, setView] = useState<View>(() => window.location.hash === '#risk' ? 'risk' : 'overview')
+  const [riskRefreshToken, setRiskRefreshToken] = useState(0)
   const [mobileNav, setMobileNav] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [showPasswordSettings, setShowPasswordSettings] = useState(false)
@@ -1397,6 +1399,7 @@ function Dashboard({ session }: { session: Session }) {
   const navItems: Array<{ id: View; label: string; icon: typeof BarChart3 }> = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
     { id: 'crypto', label: 'Crypto value', icon: Coins },
+    { id: 'risk', label: 'Risk', icon: ShieldCheck },
     { id: 'losses', label: 'Losses', icon: AlertTriangle },
     { id: 'holdings', label: 'Holdings', icon: Layers3 },
     { id: 'activity', label: 'Activity', icon: Activity },
@@ -1404,6 +1407,7 @@ function Dashboard({ session }: { session: Session }) {
 
   function chooseView(next: View) {
     setView(next)
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${next === 'risk' ? '#risk' : ''}`)
     setMobileNav(false)
     if (next !== 'overview') setSelectedPlatform(null)
   }
@@ -1465,8 +1469,8 @@ function Dashboard({ session }: { session: Session }) {
 
         <div className={`page-content ${view === 'overview' ? 'overview-page' : ''}`}>
           {view !== 'overview' && <div className="page-heading">
-            <div><p className="eyebrow">{view.toUpperCase()}</p><h1>{view === 'crypto' ? 'Crypto value history' : view === 'losses' ? 'Loss history' : view === 'holdings' ? 'All holdings' : 'Portfolio activity'}</h1></div>
-            <div className="heading-actions"><button className="secondary-button" onClick={() => { void load(); if (view === 'crypto') void loadHistory(true) }} disabled={loading || (view === 'crypto' && historyLoading)}><RefreshCw size={16} className={loading || (view === 'crypto' && historyLoading) ? 'spinning' : ''} />Refresh</button>{view === 'holdings' && <button className="primary-button compact" onClick={() => setShowHoldingForm(true)}><Plus size={17} />Add holding</button>}</div>
+            <div><p className="eyebrow">{view.toUpperCase()}</p><h1>{view === 'crypto' ? 'Crypto value history' : view === 'losses' ? 'Loss history' : view === 'holdings' ? 'All holdings' : view === 'risk' ? 'Portfolio risk' : 'Portfolio activity'}</h1></div>
+            <div className="heading-actions"><button className="secondary-button" onClick={() => { void load(); if (view === 'crypto') void loadHistory(true); if (view === 'risk') setRiskRefreshToken((value) => value + 1) }} disabled={loading || (view === 'crypto' && historyLoading)}><RefreshCw size={16} className={loading || (view === 'crypto' && historyLoading) ? 'spinning' : ''} />Refresh</button>{view === 'holdings' && <button className="primary-button compact" onClick={() => setShowHoldingForm(true)}><Plus size={17} />Add holding</button>}</div>
           </div>}
 
           {!loading && (livePriceDelayed || stockPriceDelayed) && <div className="error-banner" role="status"><AlertTriangle size={18} /><span>Some prices could not be refreshed. Total includes last saved prices and may change when the feed recovers.</span></div>}
@@ -1636,6 +1640,8 @@ function Dashboard({ session }: { session: Session }) {
               ) : <EmptyState onAdd={() => setShowHoldingForm(true)} />}
             </section>
           )}
+
+          {view === 'risk' && <RiskPage positions={positions} positionsLoading={loading} currentTotal={total} refreshToken={riskRefreshToken} />}
 
           {view === 'activity' && (
             <section className="panel compact-panel">
