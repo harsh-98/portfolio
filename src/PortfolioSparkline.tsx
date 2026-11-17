@@ -57,7 +57,7 @@ export function PortfolioSparkline({ snapshots, formatMoney }: Props) {
     </div>
     {current ? <div className="portfolio-sparkline-plot">
       <button type="button" aria-label="Previous portfolio snapshot" disabled={currentIndex === 0} onClick={() => setSelected(currentIndex - 1)}>‹</button>
-      <svg viewBox="0 0 200 32" preserveAspectRatio="none" role="slider" tabIndex={0} aria-label="Portfolio value history. Use arrow keys to inspect snapshots." aria-valuemin={0} aria-valuemax={points.length - 1} aria-valuenow={currentIndex} aria-valuetext={`${dateLabel(current.date)}: ${formatMoney(current.value)}`} onPointerMove={inspect} onPointerDown={inspect} onKeyDown={navigate}>
+      <svg width="200" height="32" viewBox="0 0 200 32" preserveAspectRatio="none" role="slider" tabIndex={0} aria-label="Portfolio value history. Use arrow keys to inspect snapshots." aria-valuemin={0} aria-valuemax={points.length - 1} aria-valuenow={currentIndex} aria-valuetext={`${dateLabel(current.date)}: ${formatMoney(current.value)}`} onPointerMove={inspect} onPointerDown={inspect} onKeyDown={navigate}>
         <rect width="200" height="32" fill="transparent" pointerEvents="all" />
         <path d={path} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
         <line x1={x(current.time)} x2={x(current.time)} y1="0" y2="32" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="2 2" vectorEffect="non-scaling-stroke" />

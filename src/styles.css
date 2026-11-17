@@ -226,8 +226,8 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .overview-page { height: calc(100vh - 58px); max-width: none; padding: 10px 14px 12px; overflow: hidden; }
 .overview-dashboard { height: 100%; min-height: 0; display: grid; grid-template-rows: 62px minmax(0, 1fr); gap: 4px; }
 .overview-kpis { min-height: 0; }
-.wealth-strip { height: 62px; display: grid; grid-template-columns: 1.2fr .9fr .9fr minmax(210px, 1.4fr); align-items: stretch; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); overflow: hidden; }
-.wealth-strip section { min-width: 0; display: grid; grid-template-columns: auto auto; align-content: center; justify-content: start; column-gap: 8px; padding: 8px 15px; border-right: 1px solid var(--line); }
+.wealth-strip { height: 62px; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .9fr) minmax(0, .9fr) minmax(220px, 1.4fr); grid-template-rows: minmax(0, 1fr); align-items: stretch; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); overflow: hidden; }
+.wealth-strip section { min-width: 0; min-height: 0; display: grid; grid-template-columns: auto auto; align-content: center; justify-content: start; column-gap: 8px; padding: 8px 15px; border-right: 1px solid var(--line); }
 .wealth-strip section > span { grid-column: 1 / 3; color: #7e8a92; font-size: 8px; }
 .wealth-strip section > strong { color: #e8edef; font-size: 18px; letter-spacing: -.03em; }
 .wealth-strip section:first-child > strong { font: 600 22px 'Newsreader', serif; }
@@ -523,7 +523,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .history-empty p { max-width: 430px; margin: 5px 0 0; font-size: 9px; line-height: 1.6; }
 
 @media (max-width: 1000px) {
-  .wealth-strip { grid-template-columns: 1.2fr 1fr 1fr; }
+  .wealth-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: 64px 46px; }
   .wealth-strip > p { display: none; }
   .loss-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .history-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -695,7 +695,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .topbar-actions { min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 }
 
-.portfolio-sparkline { min-width: 0; padding: 3px 10px; display: grid; grid-template-rows: 26px minmax(0, 1fr); gap: 2px; }
+.portfolio-sparkline { min-width: 0; min-height: 0; height: 100%; overflow: hidden; contain: layout size; padding: 3px 10px; display: grid; grid-template-rows: 26px minmax(0, 1fr); gap: 2px; }
 .portfolio-sparkline-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .portfolio-sparkline-readout { min-width: 0; display: grid; gap: 1px; }
 .portfolio-sparkline-readout strong { color: #e3ece7; font: 500 12px/14px 'DM Mono', monospace; white-space: nowrap; }
@@ -704,17 +704,26 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .portfolio-sparkline button { border: 1px solid #29333a; border-radius: 3px; padding: 2px 4px; color: #91a39a; background: transparent; font: 8px 'DM Mono', monospace; cursor: pointer; touch-action: manipulation; }
 .portfolio-sparkline button[aria-pressed="true"] { color: var(--green); background: #15271e; border-color: #315b47; }
 .portfolio-sparkline button:disabled { opacity: .3; cursor: default; }
-.portfolio-sparkline-plot { min-height: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr) 20px; gap: 4px; }
+.portfolio-sparkline-plot { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-columns: 20px minmax(0, 1fr) 20px; gap: 4px; }
 .portfolio-sparkline-plot > button { min-height: 0; padding: 0; font: 16px/16px sans-serif; color: #a9d8bf; }
-.portfolio-sparkline svg { min-width: 0; width: 100%; height: 100%; min-height: 0; color: var(--green); touch-action: pan-y; cursor: crosshair; }
+.portfolio-sparkline svg { display: block; min-width: 0; width: 100%; height: 100%; min-height: 0; color: var(--green); touch-action: pan-y; cursor: crosshair; }
 .portfolio-sparkline svg:focus-visible { outline: 1px solid var(--green); border-radius: 3px; }
 .portfolio-sparkline-empty { align-self: center; color: #7e8a92; font-size: 8px; }
 @media (max-width: 1000px) {
   .wealth-strip { height: auto; }
-  .wealth-strip > section { min-height: 60px; }
-  .portfolio-sparkline { grid-column: 1 / -1; height: 62px; border-top: 1px solid var(--line); padding: 5px 10px; }
+  .wealth-strip > .wealth-net-worth { grid-column: 1; grid-row: 1; }
+  .wealth-strip > .wealth-cash { grid-column: 1; grid-row: 2; border-top: 1px solid var(--line); }
+  .wealth-strip > .wealth-invested { grid-column: 2; grid-row: 2; border-top: 1px solid var(--line); border-right: 0; }
+  .portfolio-sparkline { grid-column: 2; grid-row: 1; height: 100%; padding: 4px 8px; }
 }
 .wealth-strip section:first-child { padding-top: 4px; padding-bottom: 4px; }
 .wealth-strip section > .snapshot-change { grid-column: 1 / -1; align-self: auto; padding: 0; line-height: 1.2; }
 .snapshot-change b { display: block; font: 7px/1.3 'DM Mono', monospace; white-space: nowrap; }
 .snapshot-change > span { display: block; color: #7e8a92; font-size: 6px; }
+
+@media (max-width: 420px) {
+  .portfolio-sparkline-heading { gap: 4px; }
+  .portfolio-sparkline-readout strong { font-size: 10px; }
+  .portfolio-sparkline-range button { padding: 2px 3px; font-size: 7px; }
+  .portfolio-sparkline-plot { grid-template-columns: 16px minmax(0, 1fr) 16px; gap: 3px; }
+}
