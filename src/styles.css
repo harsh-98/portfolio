@@ -739,7 +739,3 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .wealth-strip section > strong { font-size: 12px; }
   .wealth-strip section:first-child > strong { font-size: 15px; }
 }
-
-@media (max-width: 700px) {
-  .history-button-label { display: none; }
-}
