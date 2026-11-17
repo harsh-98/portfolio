@@ -2,7 +2,7 @@
 """Build a private report bundle for the dashboard. No credentials or network access.
 Keep output outside this public checkout. NumPy is needed only for risk scenarios.
 """
-import argparse,base64,collections,csv,datetime,json
+import argparse,base64,collections,csv,datetime,json,re
 from pathlib import Path
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--output',required=True,type=Path)
@@ -34,7 +34,8 @@ if a.risk_dir:
     cols=[('symbol','Position','text'),('value_usd','Analysis value','money'),('portfolio_weight_pct','Portfolio weight','percent'),('annualized_standalone_vol_pct','Annual volatility','percent'),('one_month_ES95_contribution_pct','Monthly loss share','percent'),('one_month_ES95_contribution_usd','Monthly loss contribution','money'),('risk_note','Notes','text')]
     reports.append({'version':1,'key':'portfolio-risk-'+date,'title':'Portfolio risk · '+date,'created_at':r['created_at_utc'],'kind':'risk','summary':f'{r["paths"]:,} correlated scenarios, loss thresholds, risk contributions and stress comparisons. Historical model, not guaranteed probabilities.','analysis':analysis,'table':{'columns':[{'key':k,'label':label,'format':fmt} for k,label,fmt in cols],'rows':rows},'pdf_base64':pdf(a.risk_dir/'portfolio-risk-report.pdf')})
 if a.loss_report:
-    r=json.loads(a.loss_report.read_text());date='2026-11-14'
+    r=json.loads(a.loss_report.read_text());match=re.search(r'(\d{4}-\d{2}-\d{2})',a.loss_report.name);date=a.date[:10] if a.date else match[1] if match else None
+    if not date:raise RuntimeError('Loss review needs a dated filename or --date')
     sections=[{'title':'Recorded balance change','text':f'October-end recorded value: ${r["baseline_daily_total"]:,.2f}. Review value: ${r["current_saved_total"]:,.2f}. Recorded decline: ${-r["recorded_decline"]:,.2f} ({-r["recorded_decline_pct"]:.2f}%). This is not a cash-flow-adjusted investment return.'},{'title':'Accounting corrections','text':f'rUSDC prior recorded value removed: ${r["rusdc_prior_value_removed"]:,.2f}, following the owner-reported hack loss. Stale Wio cash removed: ${r["wio_stale_cash_removed"]:,.2f}. These should not be treated as ordinary market-price losses.'},{'title':'Scope and limits','text':r['note']+' The table is an approximate price-only attribution on continuing positions, not exact realised trading performance.'}]
     reports.append({'version':1,'key':'november-loss-review-'+date,'title':'November loss review · '+date,'created_at':date+'T14:42:41Z','kind':'review','summary':'Market losses versus balance corrections and stale marks. Dated review; not current portfolio performance.','sections':sections,'table':{'columns':[{'key':'symbol','label':'Position','format':'text'},{'key':'price_effect_usd','label':'Approximate price effect','format':'money'}],'rows':[{'symbol':s,'price_effect_usd':v} for s,v in sorted(r['price_effect_by_symbol'].items(),key=lambda x:x[1])]}})
 if a.market_report:
