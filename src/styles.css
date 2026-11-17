@@ -523,7 +523,7 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .history-empty p { max-width: 430px; margin: 5px 0 0; font-size: 9px; line-height: 1.6; }
 
 @media (max-width: 1000px) {
-  .wealth-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: 64px 46px; }
+  .wealth-strip { grid-template-columns: minmax(0, 1.2fr) repeat(2, minmax(0, 1fr)); grid-template-rows: 60px 26px; }
   .wealth-strip > p { display: none; }
   .loss-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .history-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -695,35 +695,51 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .topbar-actions { min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 }
 
-.portfolio-sparkline { min-width: 0; min-height: 0; height: 100%; overflow: hidden; contain: layout size; padding: 3px 10px; display: grid; grid-template-rows: 26px minmax(0, 1fr); gap: 2px; }
-.portfolio-sparkline-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
-.portfolio-sparkline-readout { min-width: 0; display: grid; gap: 1px; }
-.portfolio-sparkline-readout strong { color: #e3ece7; font: 500 12px/14px 'DM Mono', monospace; white-space: nowrap; }
-.portfolio-sparkline-readout span { color: #9aa7ae; font: 8px/10px 'DM Mono', monospace; white-space: nowrap; }
-.portfolio-sparkline-range { display: flex; gap: 3px; flex-shrink: 0; }
-.portfolio-sparkline button { border: 1px solid #29333a; border-radius: 3px; padding: 2px 4px; color: #91a39a; background: transparent; font: 8px 'DM Mono', monospace; cursor: pointer; touch-action: manipulation; }
+/* Portfolio history lives in a dialog, independent of the summary sizing. */
+.portfolio-history-dialog { width: min(760px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); }
+.portfolio-sparkline { min-width: 0; margin-top: 18px; }
+.portfolio-sparkline-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.portfolio-sparkline-readout { min-width: 0; display: grid; gap: 4px; }
+.portfolio-sparkline-readout strong { color: #e3ece7; font: 500 22px/1.2 'DM Mono', monospace; }
+.portfolio-sparkline-readout span { color: #9aa7ae; font: 11px/1.3 'DM Mono', monospace; }
+.portfolio-sparkline-range { display: flex; gap: 6px; flex-shrink: 0; }
+.portfolio-sparkline button { border: 1px solid #29333a; border-radius: 5px; padding: 6px 9px; color: #91a39a; background: transparent; font: 10px 'DM Mono', monospace; cursor: pointer; touch-action: manipulation; }
 .portfolio-sparkline button[aria-pressed="true"] { color: var(--green); background: #15271e; border-color: #315b47; }
 .portfolio-sparkline button:disabled { opacity: .3; cursor: default; }
-.portfolio-sparkline-plot { min-width: 0; min-height: 0; overflow: hidden; display: grid; grid-template-columns: 20px minmax(0, 1fr) 20px; gap: 4px; }
-.portfolio-sparkline-plot > button { min-height: 0; padding: 0; font: 16px/16px sans-serif; color: #a9d8bf; }
-.portfolio-sparkline svg { display: block; min-width: 0; width: 100%; height: 100%; min-height: 0; color: var(--green); touch-action: pan-y; cursor: crosshair; }
+.portfolio-sparkline-plot { height: clamp(180px, 35dvh, 320px); min-width: 0; display: grid; grid-template-columns: 28px minmax(0, 1fr) 28px; gap: 8px; }
+.portfolio-sparkline-plot > button { align-self: center; height: 36px; padding: 0; font: 22px/22px sans-serif; color: #a9d8bf; }
+.portfolio-sparkline svg { display: block; min-width: 0; width: 100%; height: 100%; color: var(--green); touch-action: pan-y; cursor: crosshair; }
 .portfolio-sparkline svg:focus-visible { outline: 1px solid var(--green); border-radius: 3px; }
-.portfolio-sparkline-empty { align-self: center; color: #7e8a92; font-size: 8px; }
+.portfolio-sparkline-empty { min-height: 180px; display: grid; place-items: center; color: #7e8a92; font-size: 12px; }
+.portfolio-history-dates { display: flex; justify-content: space-between; gap: 12px; padding: 8px 36px; color: #8a98a0; font: 9px 'DM Mono', monospace; }
+.portfolio-history-hint { margin: 8px 0; color: #85929b; font-size: 10px; }
+.portfolio-history-snapshots { max-height: 180px; overflow-y: auto; border-top: 1px solid var(--line); }
+.portfolio-history-snapshots > button { display: flex; width: 100%; justify-content: space-between; gap: 12px; padding: 9px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+.portfolio-history-snapshots strong { color: #e3ece7; font-weight: 500; }
+.wealth-snapshot-change { min-width: 0; display: flex; flex-direction: column; justify-content: center; align-items: flex-end; gap: 3px; padding: 8px 14px; }
+.wealth-snapshot-change > span, .wealth-snapshot-change > time { color: #7e8a92; font-size: 8px; }
+.wealth-snapshot-change > strong { font: 11px 'DM Mono', monospace; white-space: nowrap; }
+.wealth-snapshot-change strong small { font: inherit; }
 @media (max-width: 1000px) {
   .wealth-strip { height: auto; }
   .wealth-strip > .wealth-net-worth { grid-column: 1; grid-row: 1; }
-  .wealth-strip > .wealth-cash { grid-column: 1; grid-row: 2; border-top: 1px solid var(--line); }
-  .wealth-strip > .wealth-invested { grid-column: 2; grid-row: 2; border-top: 1px solid var(--line); border-right: 0; }
-  .portfolio-sparkline { grid-column: 2; grid-row: 1; height: 100%; padding: 4px 8px; }
+  .wealth-strip > .wealth-cash { grid-column: 2; grid-row: 1; }
+  .wealth-strip > .wealth-invested { grid-column: 3; grid-row: 1; border-right: 0; }
+  .wealth-strip > section { grid-template-columns: minmax(0, 1fr); column-gap: 0; padding: 7px 6px; }
+  .wealth-strip section > span, .wealth-strip section > strong, .wealth-strip section > small { grid-column: 1; }
+  .wealth-snapshot-change { grid-column: 1 / -1; grid-row: 2; flex-direction: row; justify-content: space-between; align-items: center; gap: 5px; padding: 4px 8px; border-top: 1px solid var(--line); }
+  .wealth-snapshot-change > strong { font-size: 9px; }
+  .wealth-snapshot-change > span, .wealth-snapshot-change > time { font-size: 7px; }
 }
-.wealth-strip section:first-child { padding-top: 4px; padding-bottom: 4px; }
-.wealth-strip section > .snapshot-change { grid-column: 1 / -1; align-self: auto; padding: 0; line-height: 1.2; }
-.snapshot-change b { display: block; font: 7px/1.3 'DM Mono', monospace; white-space: nowrap; }
-.snapshot-change > span { display: block; color: #7e8a92; font-size: 6px; }
-
 @media (max-width: 420px) {
-  .portfolio-sparkline-heading { gap: 4px; }
-  .portfolio-sparkline-readout strong { font-size: 10px; }
-  .portfolio-sparkline-range button { padding: 2px 3px; font-size: 7px; }
-  .portfolio-sparkline-plot { grid-template-columns: 16px minmax(0, 1fr) 16px; gap: 3px; }
+  .portfolio-history-dialog { padding: 12px; }
+  .portfolio-sparkline-readout strong { font-size: 18px; }
+  .portfolio-sparkline-plot { grid-template-columns: 24px minmax(0, 1fr) 24px; gap: 5px; }
+  .portfolio-history-dates { padding-left: 29px; padding-right: 29px; font-size: 8px; }
+  .wealth-strip section > strong { font-size: 12px; }
+  .wealth-strip section:first-child > strong { font-size: 15px; }
+}
+
+@media (max-width: 700px) {
+  .history-button-label { display: none; }
 }
