@@ -8,15 +8,10 @@ import numpy as np
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--report-dir',required=True,type=Path)
 p.add_argument('--holdings-file',required=True,type=Path)
-p.add_argument('--key-file',default=os.environ.get('PORTFOLIO_SERVER_KEY_FILE'))
-a=p.parse_args();cfg={}
-if a.key_file:
-    for line in Path(a.key_file).read_text().splitlines():
-        k,sep,v=line.strip().removeprefix('export ').partition('=')
-        if sep and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',k.strip()):cfg[k.strip()]=v.strip().strip('\"\'')
+a=p.parse_args()
 def required(k):
-    v=os.environ.get(k) or cfg.get(k)
-    if not v:raise RuntimeError('Missing configuration: '+k)
+    v=os.environ.get(k)
+    if not v:raise RuntimeError('Missing approved process environment: '+k+'. Credential files are not read; use the Reports page uploader or an approved environment connection.')
     return v
 base=required('SUPABASE_URL').rstrip('/')
 headers={'apikey':required('SUPABASE_SECRET_KEY'),'Authorization':'Bearer '+required('SUPABASE_SECRET_KEY'),'Content-Type':'application/json','Prefer':'return=representation'}
@@ -26,7 +21,7 @@ def request(path,params=None,body=None,method='GET'):
         req=urllib.request.Request(url,headers=headers,method=method,data=None if body is None else json.dumps(body,allow_nan=False).encode())
         with urllib.request.urlopen(req,timeout=45) as response:return json.load(response)
     except urllib.error.HTTPError as e:raise RuntimeError('Supabase request failed: HTTP '+str(e.code)) from None
-owner=os.environ.get('PORTFOLIO_OWNER_ID') or cfg.get('PORTFOLIO_OWNER_ID','')
+owner=os.environ.get('PORTFOLIO_OWNER_ID','')
 if not re.fullmatch(r'[0-9a-fA-F-]{36}',owner):
     users=request('/auth/v1/admin/users',{'page':1,'per_page':100})['users']
     owner=next((u['id'] for u in users if u.get('email','').lower()==required('PORTFOLIO_OWNER_EMAIL').lower()),None)

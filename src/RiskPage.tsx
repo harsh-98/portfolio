@@ -39,7 +39,7 @@ const stressLabels: Record<string, string> = {
   USDT_total_failure_only: 'USDT becomes worthless',
 }
 
-function isAnalysis(value: unknown): value is RiskAnalysis {
+export function isRiskAnalysis(value: unknown): value is RiskAnalysis {
   if (!value || typeof value !== 'object') return false
   const a = value as RiskAnalysis
   return a.version === 1 && Number.isFinite(a.model_marked_value_usd) && a.model_marked_value_usd > 0 && Number.isFinite(a.annualized_market_vol_pct)
@@ -51,7 +51,7 @@ function isAnalysis(value: unknown): value is RiskAnalysis {
     && horizons.every(({ id }) => Number.isFinite(a.metrics?.[id]?.loss_95_usd) && Number.isFinite(a.metrics[id].expected_shortfall_95_usd) && Array.isArray(a.histogram?.[id]))
 }
 
-export function RiskPage({ positions, positionsLoading, currentTotal, refreshToken }: { positions: Position[]; positionsLoading: boolean; currentTotal: number; refreshToken: number }) {
+export function RiskPage({ positions, positionsLoading, currentTotal, refreshToken, reportAssetId }: { positions: Position[]; positionsLoading: boolean; currentTotal: number; refreshToken: number; reportAssetId?: string }) {
   const [analysis, setAnalysis] = useState<RiskAnalysis | null>(null)
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState('')
@@ -66,12 +66,13 @@ export function RiskPage({ positions, positionsLoading, currentTotal, refreshTok
     let cancelled = false
     void (async () => {
       try {
-        const result = await supabase.from('assets').select('analysis:metadata->analysis').eq('symbol', '_RISK_ANALYSIS_CACHE').eq('network', 'risk-analysis:v1').abortSignal(controller.signal).maybeSingle()
+        const query = reportAssetId ? supabase.from('assets').select('analysis:metadata->report->analysis').eq('id', reportAssetId).eq('symbol', '_PORTFOLIO_REPORT') : supabase.from('assets').select('analysis:metadata->analysis').eq('symbol', '_RISK_ANALYSIS_CACHE').eq('network', 'risk-analysis:v1')
+        const result = await query.abortSignal(controller.signal).maybeSingle()
         if (cancelled) return
         if (result.error) throw result.error
         if (!result.data) { setAnalysis(null); return }
         const value = result.data.analysis
-        if (!isAnalysis(value)) throw new Error('The saved analysis is incomplete. Please publish a new risk analysis.')
+        if (!isRiskAnalysis(value)) throw new Error('The saved analysis is incomplete. Please publish a new risk analysis.')
         setAnalysis(value)
       } catch (failure) {
         if (!cancelled) setError(controller.signal.aborted ? 'Risk analysis took too long to load. Tap Refresh to retry.' : failure instanceof Error ? failure.message : 'Unable to load the risk analysis.')
@@ -81,7 +82,7 @@ export function RiskPage({ positions, positionsLoading, currentTotal, refreshTok
       }
     })()
     return () => { cancelled = true; window.clearTimeout(timeout); controller.abort() }
-  }, [refreshToken])
+  }, [refreshToken, reportAssetId])
 
   const changedHoldings = useMemo(() => {
     if (!analysis || positionsLoading) return null
