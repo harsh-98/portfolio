@@ -695,29 +695,25 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .topbar-actions { min-width: 0; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 }
 
-.portfolio-sparkline { min-width: 0; padding: 3px 10px; display: grid; grid-template-rows: 15px minmax(0, 1fr) 10px; gap: 1px; }
-.portfolio-sparkline-heading, .portfolio-sparkline-caption { display: flex; align-items: center; justify-content: space-between; gap: 5px; min-width: 0; }
-.portfolio-sparkline-heading > span { color: #7e8a92; font-size: 8px; }
-.portfolio-sparkline-heading > div { display: flex; gap: 3px; }
-.portfolio-sparkline button { border: 1px solid #29333a; border-radius: 3px; padding: 1px 4px; color: #7e8a92; background: transparent; font: 7px 'DM Mono', monospace; cursor: pointer; }
+.portfolio-sparkline { min-width: 0; padding: 3px 10px; display: grid; grid-template-rows: 26px minmax(0, 1fr); gap: 2px; }
+.portfolio-sparkline-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.portfolio-sparkline-readout { min-width: 0; display: grid; gap: 1px; }
+.portfolio-sparkline-readout strong { color: #e3ece7; font: 500 12px/14px 'DM Mono', monospace; white-space: nowrap; }
+.portfolio-sparkline-readout span { color: #9aa7ae; font: 8px/10px 'DM Mono', monospace; white-space: nowrap; }
+.portfolio-sparkline-range { display: flex; gap: 3px; flex-shrink: 0; }
+.portfolio-sparkline button { border: 1px solid #29333a; border-radius: 3px; padding: 2px 4px; color: #91a39a; background: transparent; font: 8px 'DM Mono', monospace; cursor: pointer; touch-action: manipulation; }
 .portfolio-sparkline button[aria-pressed="true"] { color: var(--green); background: #15271e; border-color: #315b47; }
-.portfolio-sparkline svg { width: 100%; height: 100%; min-height: 0; color: var(--green); touch-action: pan-y; cursor: crosshair; }
+.portfolio-sparkline button:disabled { opacity: .3; cursor: default; }
+.portfolio-sparkline-plot { min-height: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr) 20px; gap: 4px; }
+.portfolio-sparkline-plot > button { min-height: 0; padding: 0; font: 16px/16px sans-serif; color: #a9d8bf; }
+.portfolio-sparkline svg { min-width: 0; width: 100%; height: 100%; min-height: 0; color: var(--green); touch-action: pan-y; cursor: crosshair; }
 .portfolio-sparkline svg:focus-visible { outline: 1px solid var(--green); border-radius: 3px; }
-.portfolio-sparkline-caption { font: 7px 'DM Mono', monospace; color: #7e8a92; }
-.portfolio-sparkline-caption strong { color: #cdd5d9; font-weight: 500; }
-.portfolio-sparkline-empty { grid-row: 2 / 4; align-self: center; color: #7e8a92; font-size: 8px; }
+.portfolio-sparkline-empty { align-self: center; color: #7e8a92; font-size: 8px; }
 @media (max-width: 1000px) {
   .wealth-strip { height: auto; }
   .wealth-strip > section { min-height: 60px; }
   .portfolio-sparkline { grid-column: 1 / -1; height: 62px; border-top: 1px solid var(--line); padding: 5px 10px; }
 }
-.portfolio-sparkline { grid-template-rows: 15px minmax(0, 1fr) 17px; }
-.portfolio-sparkline-caption { display: grid; grid-template-columns: 17px minmax(0, 1fr) 17px; gap: 4px; }
-.portfolio-sparkline-readout { display: flex; align-items: center; justify-content: space-between; gap: 5px; min-width: 0; }
-.portfolio-sparkline-readout span { font-size: 8px; white-space: nowrap; }
-.portfolio-sparkline-readout strong { color: #e3ece7; font-size: 9px; white-space: nowrap; }
-.portfolio-sparkline-caption button { padding: 0; height: 17px; font: 14px/14px sans-serif; color: #a9d8bf; touch-action: manipulation; }
-.portfolio-sparkline-caption button:disabled { opacity: .3; cursor: default; }
 .wealth-strip section:first-child { padding-top: 4px; padding-bottom: 4px; }
 .wealth-strip section > .snapshot-change { grid-column: 1 / -1; align-self: auto; padding: 0; line-height: 1.2; }
 .snapshot-change b { display: block; font: 7px/1.3 'DM Mono', monospace; white-space: nowrap; }

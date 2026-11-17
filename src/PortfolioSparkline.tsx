@@ -50,9 +50,13 @@ export function PortfolioSparkline({ snapshots, formatMoney }: Props) {
     event.preventDefault()
     setSelected(event.key === 'Home' ? 0 : event.key === 'End' ? points.length - 1 : Math.max(0, Math.min(points.length - 1, currentIndex + (event.key === 'ArrowLeft' ? -1 : 1))))
   }
-  return <div className="portfolio-sparkline">
-    <div className="portfolio-sparkline-heading"><span>Portfolio snapshots</span><div role="group" aria-label="Portfolio history range">{(['1M', '1Y'] as const).map((value) => <button key={value} type="button" aria-pressed={range === value} onClick={() => { setRange(value); setSelected(null) }}>{value}</button>)}</div></div>
-    {current ? <>
+  return <div className="portfolio-sparkline" role="group" aria-label="Portfolio snapshots">
+    <div className="portfolio-sparkline-heading">
+      <div className="portfolio-sparkline-readout" role="status">{current ? <><strong>{formatMoney(current.value)}</strong><span>{dateLabel(current.date)}</span></> : <span>Portfolio snapshots</span>}</div>
+      <div className="portfolio-sparkline-range" role="group" aria-label="Portfolio history range">{(['1M', '1Y'] as const).map((value) => <button key={value} type="button" aria-pressed={range === value} onClick={() => { setRange(value); setSelected(null) }}>{value}</button>)}</div>
+    </div>
+    {current ? <div className="portfolio-sparkline-plot">
+      <button type="button" aria-label="Previous portfolio snapshot" disabled={currentIndex === 0} onClick={() => setSelected(currentIndex - 1)}>‹</button>
       <svg viewBox="0 0 200 32" preserveAspectRatio="none" role="slider" tabIndex={0} aria-label="Portfolio value history. Use arrow keys to inspect snapshots." aria-valuemin={0} aria-valuemax={points.length - 1} aria-valuenow={currentIndex} aria-valuetext={`${dateLabel(current.date)}: ${formatMoney(current.value)}`} onPointerMove={inspect} onPointerDown={inspect} onKeyDown={navigate}>
         <rect width="200" height="32" fill="transparent" pointerEvents="all" />
         <path d={path} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
@@ -60,11 +64,7 @@ export function PortfolioSparkline({ snapshots, formatMoney }: Props) {
         {points.map((point) => <circle key={point.date} cx={x(point.time)} cy={y(point.value)} r={points.length > 30 ? 0.9 : 1.8} fill="#0d1216" stroke="currentColor" strokeWidth="1" vectorEffect="non-scaling-stroke"><title>{dateLabel(point.date)}: {formatMoney(point.value)}</title></circle>)}
         <circle cx={x(current.time)} cy={y(current.value)} r="2.7" fill="currentColor"><title>{dateLabel(current.date)}: {formatMoney(current.value)}</title></circle>
       </svg>
-      <div className="portfolio-sparkline-caption">
-        <button type="button" aria-label="Previous portfolio snapshot" disabled={currentIndex === 0} onClick={() => setSelected(currentIndex - 1)}>‹</button>
-        <div className="portfolio-sparkline-readout" role="status"><span>{dateLabel(current.date)}</span><strong>{formatMoney(current.value)}</strong></div>
-        <button type="button" aria-label="Next portfolio snapshot" disabled={currentIndex === points.length - 1} onClick={() => setSelected(currentIndex + 1)}>›</button>
-      </div>
-    </> : <span className="portfolio-sparkline-empty">No snapshots in this range</span>}
+      <button type="button" aria-label="Next portfolio snapshot" disabled={currentIndex === points.length - 1} onClick={() => setSelected(currentIndex + 1)}>›</button>
+    </div> : <span className="portfolio-sparkline-empty">No snapshots in this range</span>}
   </div>
 }
