@@ -1199,6 +1199,7 @@ function Dashboard({ session }: { session: Session }) {
     })
     return [...grouped.values()].filter((item) => item.value >= 100 || (item.writtenDown && item.pricedCost >= 100)).sort((a, b) => b.value - a.value)
   }, [positions])
+  const digitalAssetsTotal = cryptoExposure.reduce((sum, asset) => sum + asset.value, 0)
   const digitalPnl = useMemo(() => {
     const shownSymbols = new Set(cryptoExposure.map((asset) => asset.symbol))
     const digitalPositions = positions.filter((position) => ['crypto', 'stablecoin'].includes(effectiveAssetClass(position.asset)) && shownSymbols.has(canonicalCryptoSymbol(position.asset.symbol)))
@@ -1518,7 +1519,7 @@ function Dashboard({ session }: { session: Session }) {
                 </article>
 
                 <article className={overviewPanelClass('digital', 'overview-digital')}>
-                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>Digital assets</h2></div><div className="panel-heading-actions"><div className="pnl-summary"><small>Total P/L</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong><em className={digitalPnl.value == null ? 'pnl-return' : digitalPnl.value >= 0 ? 'pnl-return value-positive' : 'pnl-return value-negative'}>{formatPnlPercent(digitalPnl.percent)}</em></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>{formatMoney(digitalAssetsTotal)} total</h2></div><div className="panel-heading-actions"><div className="pnl-summary"><small>Total P/L</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong><em className={digitalPnl.value == null ? 'pnl-return' : digitalPnl.value >= 0 ? 'pnl-return value-positive' : 'pnl-return value-negative'}>{formatPnlPercent(digitalPnl.percent)}</em></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className="digital-columns" aria-hidden="true"><span>Asset / venue</span><span>Value / units</span><span>P/L</span><span>Alloc.</span></div>
                   <div className="asset-rows digital-rows">{cryptoExposure.map((asset) => {
                     const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
