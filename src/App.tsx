@@ -1093,6 +1093,10 @@ function Dashboard({ session }: { session: Session }) {
   const formatUnitPrice = (value: number) => !Number.isFinite(value) ? 'Unavailable' : value > 0 && value < 0.000001 ? `$${value.toPrecision(5)}` : new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: value < 1 ? 10 : value < 100 ? 6 : 2 }).format(value)
 
   const total = useMemo(() => positions.reduce((sum, position) => sum + Number(position.value_usd), 0), [positions])
+  const latestPortfolioSnapshot = snapshots[snapshots.length - 1]
+  const snapshotChange = latestPortfolioSnapshot && Number.isFinite(Number(latestPortfolioSnapshot.total_value_usd))
+    ? total - Number(latestPortfolioSnapshot.total_value_usd) : null
+  const snapshotChangePercent = snapshotChange == null ? null : pnlPercent(snapshotChange, Number(latestPortfolioSnapshot.total_value_usd))
   const allocation = useMemo(() => {
     const grouped = new Map<string, number>()
     positions.forEach((position) => {
@@ -1472,7 +1476,7 @@ function Dashboard({ session }: { session: Session }) {
           {view === 'overview' && (
             <section className="overview-dashboard">
               <div className="overview-kpis">
-                <article className="wealth-strip"><section><span>Net worth</span><strong>{loading ? '—' : formatMoney(total)}</strong>{loading && <small role="status">Updating prices…</small>}</section><section><span>Cash available</span><strong>{loading ? '—' : formatMoney(liquid)}</strong><small>{total ? `${((liquid / total) * 100).toFixed(1)}%` : '—'}</small></section><section><span>Invested</span><strong>{loading ? '—' : formatMoney(total - liquid)}</strong><small>{total ? `${(((total - liquid) / total) * 100).toFixed(1)}%` : '—'}</small></section><PortfolioSparkline snapshots={snapshots} formatMoney={formatMoney} /></article>
+                <article className="wealth-strip"><section><span>Net worth</span><strong>{loading ? '—' : formatMoney(total)}</strong>{loading && <small role="status">Updating prices…</small>}{!loading && snapshotChange != null && <small className="snapshot-change" title={`Compared with ${latestPortfolioSnapshot.snapshot_date} snapshot: ${formatMoney(Number(latestPortfolioSnapshot.total_value_usd))}`}><b className={snapshotChange > 0 ? 'value-positive' : snapshotChange < 0 ? 'value-negative' : ''}>{snapshotChange >= 0 ? '+' : ''}{formatMoney(snapshotChange)} ({formatPnlPercent(snapshotChangePercent)})</b><span>vs last snapshot</span></small>}</section><section><span>Cash available</span><strong>{loading ? '—' : formatMoney(liquid)}</strong><small>{total ? `${((liquid / total) * 100).toFixed(1)}%` : '—'}</small></section><section><span>Invested</span><strong>{loading ? '—' : formatMoney(total - liquid)}</strong><small>{total ? `${(((total - liquid) / total) * 100).toFixed(1)}%` : '—'}</small></section><PortfolioSparkline snapshots={snapshots} formatMoney={formatMoney} /></article>
               </div>
 
               <div className="overview-grid">
