@@ -1106,15 +1106,31 @@ function Dashboard({ session }: { session: Session }) {
     ? total - Number(latestPortfolioSnapshot.total_value_usd) : null
   const snapshotChangePercent = snapshotChange == null ? null : pnlPercent(snapshotChange, Number(latestPortfolioSnapshot.total_value_usd))
   const allocation = useMemo(() => {
-    const grouped = new Map<string, number>()
+    const grouped = new Map<string, { value: number; pricedValue: number; cost: number; knownPositions: number; positions: number }>()
     positions.forEach((position) => {
       const assetClass = effectiveAssetClass(position.asset)
-      grouped.set(assetClass, (grouped.get(assetClass) || 0) + Number(position.value_usd))
+      const group = grouped.get(assetClass) || { value: 0, pricedValue: 0, cost: 0, knownPositions: 0, positions: 0 }
+      const value = Number(position.value_usd)
+      const cost = position.cost_basis_usd == null ? null : Number(position.cost_basis_usd)
+      group.value += value
+      group.positions++
+      if (cost != null && Number.isFinite(cost) && cost >= 0) {
+        group.pricedValue += value
+        group.cost += cost
+        group.knownPositions++
+      }
+      grouped.set(assetClass, group)
     })
-    return Object.entries(classMeta)
-      .map(([key, meta]) => ({ key, ...meta, value: grouped.get(key) || 0 }))
-      .filter((item) => item.value > 0)
+    return Object.entries(classMeta).map(([key, meta]) => {
+      const group = grouped.get(key) || { value: 0, pricedValue: 0, cost: 0, knownPositions: 0, positions: 0 }
+      const pnl = group.knownPositions ? group.pricedValue - group.cost : null
+      return { key, ...meta, ...group, pnl, pnlPercent: pnl == null ? null : pnlPercent(pnl, group.cost), hasMissingCost: group.knownPositions < group.positions }
+    }).filter((item) => item.value > 0)
   }, [positions])
+  const allocationReturnLabel = (item: typeof allocation[number]) => item.knownPositions === 0 ? 'Cost pending' : `P/L ${formatPnlPercent(item.pnlPercent)}`
+  const allocationReturnTitle = (item: typeof allocation[number]) => item.knownPositions === 0
+    ? 'Purchase costs are not available for this category.'
+    : `Unrealized P/L ${formatMoney(item.pnl ?? 0)} divided by ${formatMoney(item.cost)} recorded purchase cost.${item.hasMissingCost ? ' Known costs only; positions without cost are excluded.' : ''}`
   const liquid = allocation.filter((item) => ['cash', 'stablecoin'].includes(item.key)).reduce((sum, item) => sum + item.value, 0)
   const allocationArcs = allocation.map((item, index) => ({
     ...item,
@@ -1510,10 +1526,10 @@ function Dashboard({ session }: { session: Session }) {
                 <article className={overviewPanelClass('allocation', 'overview-allocation')}>
                   <div className="panel-heading"><div><p className="eyebrow">ASSET ALLOCATION</p><h2>Where the wealth sits</h2></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'allocation' ? null : 'allocation')} aria-label="Expand asset allocation">{expandedPanel === 'allocation' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div>
                   <div className="allocation-visual">
-                    <div className="allocation-pie interactive-pie"><svg viewBox="0 0 42 42" aria-label="Interactive asset allocation">{allocationArcs.map((item) => <circle key={item.key} cx="21" cy="21" r="15.9155" fill="none" stroke={item.color} strokeWidth="9" pathLength="100" strokeDasharray={`${item.percent} ${100 - item.percent}`} strokeDashoffset={item.offset} role="button" tabIndex={0} aria-label={`${item.label}, ${item.percent.toFixed(1)} percent`} onClick={() => setSelectedAllocation(item.key as AssetClass)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setSelectedAllocation(item.key as AssetClass) }} />)}</svg><span><strong>{allocation.length}</strong>classes</span></div>
-                    <div className="allocation-legend">{allocation.map((item) => <button key={item.key} onClick={() => setSelectedAllocation(item.key as AssetClass)}><span><i style={{ background: item.color }} />{item.label}</span><strong>{total ? ((item.value / total) * 100).toFixed(1) : '0.0'}%</strong><small>{formatMoney(item.value)}</small></button>)}</div>
+                    <div className="allocation-pie interactive-pie"><svg viewBox="0 0 42 42" aria-label="Interactive asset allocation">{allocationArcs.map((item) => <circle key={item.key} cx="21" cy="21" r="15.9155" fill="none" stroke={item.color} strokeWidth="9" pathLength="100" strokeDasharray={`${item.percent} ${100 - item.percent}`} strokeDashoffset={item.offset} role="button" tabIndex={0} aria-label={`${item.label}, ${item.percent.toFixed(1)} percent allocation, ${allocationReturnLabel(item)}${item.hasMissingCost ? ', known costs only' : ''}`} onClick={() => setSelectedAllocation(item.key as AssetClass)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') setSelectedAllocation(item.key as AssetClass) }}><title>{`${item.label}: ${item.percent.toFixed(1)}% allocation · ${allocationReturnLabel(item)}${item.hasMissingCost ? ' · known costs only' : ''}`}</title></circle>)}</svg><span><strong>{allocation.length}</strong>classes</span></div>
+                    <div className="allocation-legend">{allocation.map((item) => <button key={item.key} onClick={() => setSelectedAllocation(item.key as AssetClass)}><span><i style={{ background: item.color }} />{item.label}</span><strong className="allocation-weight">Alloc. {total ? ((item.value / total) * 100).toFixed(1) : '0.0'}%</strong><small className="allocation-value">{formatMoney(item.value)}</small><em title={allocationReturnTitle(item)} className={`allocation-return${item.pnl != null && item.pnl > 0 ? ' value-positive' : item.pnl != null && item.pnl < 0 ? ' value-negative' : ''}`}>{allocationReturnLabel(item)}</em>{item.hasMissingCost && item.knownPositions > 0 && <small className="allocation-cost-note">Known costs only</small>}</button>)}</div>
                   </div>
-                  {selectedAllocation && selectedAllocationItem && <div className="allocation-drilldown"><div className="drilldown-head"><span><i style={{ background: selectedAllocationItem.color }} /><strong>{selectedAllocationItem.label}</strong><small>{formatMoney(selectedAllocationItem.value)}</small></span><button onClick={() => setSelectedAllocation(null)} aria-label="Close allocation detail"><X size={14} /></button></div><p>Spread across platforms and addresses</p><div>{selectedAllocationPlatforms.map(([platform, value]) => <section key={platform}><span>{platform}</span><strong>{formatMoney(value)}</strong><small>{((value / selectedAllocationItem.value) * 100).toFixed(1)}%</small></section>)}</div></div>}
+                  {selectedAllocation && selectedAllocationItem && <div className="allocation-drilldown"><div className="drilldown-head"><span><i style={{ background: selectedAllocationItem.color }} /><strong>{selectedAllocationItem.label}</strong><small>{formatMoney(selectedAllocationItem.value)}</small></span><button onClick={() => setSelectedAllocation(null)} aria-label="Close allocation detail"><X size={14} /></button></div><p title={allocationReturnTitle(selectedAllocationItem)}><strong className={selectedAllocationItem.pnl != null && selectedAllocationItem.pnl > 0 ? 'value-positive' : selectedAllocationItem.pnl != null && selectedAllocationItem.pnl < 0 ? 'value-negative' : ''}>Unrealized {allocationReturnLabel(selectedAllocationItem)}</strong>{selectedAllocationItem.hasMissingCost && selectedAllocationItem.knownPositions > 0 ? ' · Known costs only' : ''}</p><div>{selectedAllocationPlatforms.map(([platform, value]) => <section key={platform}><span>{platform}</span><strong>{formatMoney(value)}</strong><small>{((value / selectedAllocationItem.value) * 100).toFixed(1)}%</small></section>)}</div></div>}
                 </article>
 
                 <article className={overviewPanelClass('digital', 'overview-digital')}>

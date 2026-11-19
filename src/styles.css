@@ -739,3 +739,8 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .wealth-strip section > strong { font-size: 12px; }
   .wealth-strip section:first-child > strong { font-size: 15px; }
 }
+.allocation-legend { overflow-y: auto; }
+.allocation-legend .allocation-weight { font-size: 7px; color: #91a0a8; }
+.allocation-legend .allocation-value { grid-column: 1; grid-row: 2; }
+.allocation-legend .allocation-return { grid-column: 2; grid-row: 2; justify-self: end; font: normal 8px 'DM Mono', monospace; white-space: nowrap; }
+.allocation-legend .allocation-cost-note { grid-column: 1 / -1; color: #829188; font-size: 6px; }
