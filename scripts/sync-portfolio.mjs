@@ -1187,6 +1187,8 @@ async function ensureAccount(account) {
 }
 
 async function ensureAsset(asset) {
+  // Commodity-backed IAU belongs to Gold even when a broker labels it STOCK.
+  if (asset.symbol.toUpperCase() === "IAU") asset = { ...asset, asset_class: "gold" };
   const cacheKey = `${asset.symbol}|${asset.network ?? ""}|${asset.contract_address ?? ""}`;
   if (assetCache.has(cacheKey)) return assetCache.get(cacheKey);
   const query = new URLSearchParams({ owner_id: `eq.${ownerId}`, symbol: `eq.${asset.symbol}`, select: "id,network,contract_address,asset_class" });

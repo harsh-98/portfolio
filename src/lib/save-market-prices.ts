@@ -24,7 +24,7 @@ export async function saveMarketPrices(client: SupabaseClient, positions: Positi
     if (typeof override?.price_usd === 'number' && Number.isFinite(override.price_usd) && override.price_usd >= 0) continue
     let price: number | undefined
     let source = '', kind = 'Market quote'
-    if (assetClass === 'equity') {
+    if (assetClass === 'equity' || symbol === 'IAU') {
       const ticker = symbol === 'GOOG' ? 'GOOGL' : symbol
       price = quotes.stocks.get(ticker)
       source = quotes.stockSource

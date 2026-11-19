@@ -28,6 +28,7 @@ import { PortfolioSparkline } from './PortfolioSparkline'
 import { RiskPage } from './RiskPage'
 import { ReportsPage } from './ReportsPage'
 import { isConfigured, supabase } from './lib/supabase'
+import { effectiveAssetClass, usesStockQuotes } from './lib/asset-classification'
 import { fetchStockPrices } from './lib/stock-prices'
 import { fetchLiveCryptoPrices } from './lib/crypto-prices'
 import { saveMarketPrices } from './lib/save-market-prices'
@@ -104,7 +105,7 @@ const classMeta: Record<AssetClass, { label: string; color: string }> = {
 type View = 'overview' | 'crypto' | 'losses' | 'holdings' | 'activity' | 'risk' | 'reports'
 type OverviewPanel = 'platforms' | 'allocation' | 'digital' | 'equities' | 'spending'
 type DisplayCurrency = 'USD' | 'INR'
-type PriceCategory = 'Equities' | 'Options' | 'Crypto' | 'Other'
+type PriceCategory = 'Equities' | 'Options' | 'Gold' | 'Crypto' | 'Other'
 type CryptoRange = '3M' | '6M' | '1Y' | '3Y' | 'ALL'
 
 const cryptoRanges: CryptoRange[] = ['3M', '6M', '1Y', '3Y', 'ALL']
@@ -199,7 +200,7 @@ function livePriceSymbol(symbol: string) {
 function applyCryptoQuotes(positions: Position[], prices: Awaited<ReturnType<typeof fetchLiveCryptoPrices>>, fetchedAt: string) {
   return positions.map((position) => {
     const assetClass = effectiveAssetClass(position.asset)
-    if (!['crypto', 'stablecoin', 'gold'].includes(assetClass) || ['WSTETH', 'RETH', 'WEETH'].includes(position.asset.symbol.toUpperCase())) return position
+    if (usesStockQuotes(position.asset) || !['crypto', 'stablecoin', 'gold'].includes(assetClass) || ['WSTETH', 'RETH', 'WEETH'].includes(position.asset.symbol.toUpperCase())) return position
     const override = position.metadata.valuation_override as { price_usd?: number } | undefined
     if (typeof override?.price_usd === 'number' && Number.isFinite(override.price_usd) && override.price_usd >= 0) {
       return { ...position, price_usd: override.price_usd, value_usd: Math.round(Number(position.quantity) * override.price_usd * 100) / 100 }
@@ -213,7 +214,7 @@ function applyCryptoQuotes(positions: Position[], prices: Awaited<ReturnType<typ
 
 function applyStockQuotes(positions: Position[], prices: Map<string, number>, source: string, fetchedAt: string) {
   return positions.map((position) => {
-    if (position.asset.asset_class !== 'equity') return position
+    if (!usesStockQuotes(position.asset)) return position
     const symbol = canonicalEquitySymbol(position.asset.symbol)
     const price = prices.get(symbol)
     if (price == null) return position
@@ -221,10 +222,6 @@ function applyStockQuotes(positions: Position[], prices: Map<string, number>, so
   })
 }
 
-function effectiveAssetClass(asset: { symbol: string; asset_class: AssetClass }) {
-  if (['XAUT', 'XAUT0', 'PAXG'].includes(asset.symbol.toUpperCase())) return 'gold' as AssetClass
-  return asset.asset_class
-}
 
 function isDigitalAsset(asset: { symbol: string; asset_class: AssetClass }) {
   return ['crypto', 'stablecoin', 'nft'].includes(asset.asset_class) || ['XAUT', 'XAUT0', 'PAXG'].includes(asset.symbol.toUpperCase())
@@ -775,7 +772,7 @@ function Dashboard({ session }: { session: Session }) {
               const loadedPositions = (result.data || []) as unknown as Position[]
               let valuedPositions = loadedPositions
               if (refreshQuotes) {
-                const symbols = [...new Set(loadedPositions.filter((position) => position.asset.asset_class === 'equity').map((position) => canonicalEquitySymbol(position.asset.symbol)))]
+                const symbols = [...new Set(loadedPositions.filter((position) => usesStockQuotes(position.asset)).map((position) => canonicalEquitySymbol(position.asset.symbol)))]
                 const quoteSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(12000)])
                 const [cryptoResult, stockResult] = await Promise.allSettled([
                   fetchLiveCryptoPrices(quoteSignal),
@@ -983,7 +980,7 @@ function Dashboard({ session }: { session: Session }) {
   const refreshStockPrices = useCallback(async () => {
     if (priceSaveBusyRef.current || stockQuoteAbortRef.current || loadAbortRef.current) return
     const symbols = [...new Set(positionsRef.current
-      .filter((position) => position.asset.asset_class === 'equity')
+      .filter((position) => usesStockQuotes(position.asset))
       .map((position) => canonicalEquitySymbol(position.asset.symbol)))]
     if (!symbols.length) return
     const controller = new AbortController()
@@ -1033,7 +1030,7 @@ function Dashboard({ session }: { session: Session }) {
       const isOverride = typeof override?.price_usd === 'number' && Number.isFinite(override.price_usd) && override.price_usd >= 0
       const symbol = position.asset.symbol.toUpperCase()
       const category: PriceCategory = position.metadata.instrument_type === 'option' || /\b\d{2}\/\d{2}\/\d{4}\s+[\d.]+\s+[CP]$/.test(symbol)
-        ? 'Options' : position.asset.asset_class === 'equity' ? 'Equities' : isDigitalAsset(position.asset) ? 'Crypto' : 'Other'
+        ? 'Options' : effectiveAssetClass(position.asset) === 'gold' ? 'Gold' : effectiveAssetClass(position.asset) === 'equity' ? 'Equities' : isDigitalAsset(position.asset) ? 'Crypto' : 'Other'
       const key = `${category}:${symbol}`
       const price = isOverride ? override.price_usd! : symbol === 'INR' && fxQuote ? 1 / fxQuote.rate : Number(position.price_usd)
       const priority = isOverride ? 3 : quote || (symbol === 'INR' && fxQuote) ? 2 : 1
@@ -1046,7 +1043,7 @@ function Dashboard({ session }: { session: Session }) {
     return [...grouped.values()].sort((a, b) => a.symbol.localeCompare(b.symbol))
   }, [positions, fxQuote])
   const visibleAssetPriceRows = assetPriceRows.filter((row) => (row.symbol === 'INR' ? 'USD/INR' : row.symbol).toLowerCase().includes(priceSearch.toLowerCase()))
-  const assetPriceSections = (['Equities', 'Options', 'Crypto', 'Other'] as const)
+  const assetPriceSections = (['Equities', 'Options', 'Gold', 'Crypto', 'Other'] as const)
     .map((category) => ({ category, rows: visibleAssetPriceRows.filter((row) => row.category === category) }))
     .filter((section) => section.rows.length > 0)
   const refreshDisplayedPrices = async () => {
@@ -1063,7 +1060,7 @@ function Dashboard({ session }: { session: Session }) {
       if (readError) throw readError
       const saved = (data || []) as unknown as Position[]
       if (!saved.some((position) => position.owner_id === session.user.id)) throw new Error('Only the portfolio owner can save prices.')
-      const symbols = [...new Set(saved.filter((position) => position.asset.asset_class === 'equity').map((position) => canonicalEquitySymbol(position.asset.symbol)))]
+      const symbols = [...new Set(saved.filter((position) => usesStockQuotes(position.asset)).map((position) => canonicalEquitySymbol(position.asset.symbol)))]
       const signal = AbortSignal.timeout(20000)
       const [crypto, stocks, fx] = await Promise.allSettled([
         fetchLiveCryptoPrices(signal),
@@ -1132,7 +1129,7 @@ function Dashboard({ session }: { session: Session }) {
       const assetClass = effectiveAssetClass(position.asset)
       const platforms = classes.get(assetClass) || new Map<string, number>()
       const location = digitalPositionLocation(position)
-      const platform = isDigitalAsset(position.asset) ? `${canonicalCryptoSymbol(position.asset.symbol)} · ${location}` : location
+      const platform = isDigitalAsset(position.asset) || assetClass === 'gold' ? `${canonicalCryptoSymbol(position.asset.symbol)} · ${location}` : location
       platforms.set(platform, (platforms.get(platform) || 0) + Number(position.value_usd))
       classes.set(assetClass, platforms)
     })
@@ -1167,7 +1164,7 @@ function Dashboard({ session }: { session: Session }) {
       networks: [...networks.values()].map((network) => ({ ...network, positions: network.positions.sort((a, b) => Number(b.value_usd) - Number(a.value_usd)) })).sort((a, b) => b.value - a.value),
     }
   }, [positions, selectedPlatform])
-  const equityPositions = positions.filter((position) => position.asset.asset_class === 'equity')
+  const equityPositions = positions.filter((position) => effectiveAssetClass(position.asset) === 'equity')
   const cryptoExposure = useMemo(() => {
     const grouped = new Map<string, { symbol: string; name: string; value: number; quantity: number; pricedCost: number; pricedValue: number; pricedQuantity: number; writtenDown: boolean; breakdown: Map<string, { value: number; quantity: number; costBasis: number; pricedValue: number; pricedQuantity: number }> }>()
     positions.filter((position) => ['crypto', 'stablecoin'].includes(effectiveAssetClass(position.asset))).forEach((position) => {
@@ -1346,8 +1343,9 @@ function Dashboard({ session }: { session: Session }) {
       ? [...compositionPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, quantity: null as number | null, start: firstRangeCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
       : [...(compositionPoint.assets.get(selectedCryptoPlatform)?.values() || [])].map((asset) => ({ platform: asset.label, value: asset.value, quantity: asset.quantity, start: firstRangeCryptoPoint?.assets.get(selectedCryptoPlatform)?.get(asset.label)?.value || 0 })).sort((a, b) => b.value - a.value)
     : []
-  const realizedXtb = brokerageTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
-  const realizedXtbPercent = realizedPnlPercent(brokerageTransactions)
+  const stockTransactions = brokerageTransactions.filter((transaction) => transaction.asset?.symbol.toUpperCase() !== 'IAU')
+  const realizedXtb = stockTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
+  const realizedXtbPercent = realizedPnlPercent(stockTransactions)
   const cardBalances = positions.filter((position) => { const source = cardSourceForPosition(position); return source && selectedCardSources.includes(source) }).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
   const cardBalanceTotal = cardBalances.reduce((sum, position) => sum + Number(position.value_usd), 0)
   const spendMonths = [...new Set(spendTransactions.map((transaction) => transaction.occurred_at.slice(0, 7)))].sort()
@@ -1375,7 +1373,7 @@ function Dashboard({ session }: { session: Session }) {
       name: position.asset.name,
       account: position.account.name,
       institution: position.account.institution,
-      assetClass: classMeta[position.asset.asset_class].label,
+      assetClass: classMeta[effectiveAssetClass(position.asset)].label,
       quantity: Number(position.quantity),
       price: Number(position.price_usd),
       value,
