@@ -83,6 +83,7 @@ type EquityGridRow = {
   name: string
   venueSplit: string
   averageBuy: number | null
+  currentPrice: number | null
   value: number
   pnl: number | null
   pnlPercent: number | null
@@ -1262,7 +1263,8 @@ function Dashboard({ session }: { session: Session }) {
     symbol: asset.symbol,
     name: asset.name,
     venueSplit: [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value).map(([name, detail]) => `${name} ${asset.value ? ((detail.value / asset.value) * 100).toFixed(0) : '0'}%`).join(' · '),
-    averageBuy: asset.pricedQuantity && asset.pricedCost ? asset.pricedCost / asset.pricedQuantity : null,
+    averageBuy: asset.pricedQuantity > 0 ? asset.pricedCost / asset.pricedQuantity : null,
+    currentPrice: asset.quantity > 0 ? asset.value / asset.quantity : null,
     value: asset.value,
     pnl: asset.pricedQuantity ? asset.pricedValue - asset.pricedCost : null,
     pnlPercent: pnlPercent(asset.pricedValue - asset.pricedCost, asset.pricedCost),
@@ -1274,7 +1276,7 @@ function Dashboard({ session }: { session: Session }) {
   })), [brokerageTransactions, equities, equityExposure])
   const equityColumns = useMemo<ColDef<EquityGridRow>[]>(() => [
     { field: 'symbol', headerName: compactStocks ? 'Asset' : 'Asset / venue', minWidth: compactStocks ? 58 : 105, flex: 1.8, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
-    { field: 'averageBuy', headerName: compactStocks ? 'Avg' : 'Avg buy', minWidth: compactStocks ? 42 : 60, flex: .8, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)) },
+    { field: 'averageBuy', headerName: 'Avg buy (now)', minWidth: compactStocks ? 78 : 115, flex: 1.2, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)), cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-average-now" title={`Average buy: ${data.averageBuy == null ? 'unknown' : formatMoneyCents(data.averageBuy)} · Current price: ${data.currentPrice == null ? 'unknown' : formatMoneyCents(data.currentPrice)}`}><span>{data.averageBuy == null ? '—' : formatMoneyCents(data.averageBuy)}</span><small className={data.currentPrice == null || data.averageBuy == null || data.currentPrice === data.averageBuy ? '' : data.currentPrice > data.averageBuy ? 'value-positive' : 'value-negative'}>({data.currentPrice == null ? '—' : formatMoneyCents(data.currentPrice)})</small></span> : null },
     { field: 'value', headerName: compactStocks ? 'Value' : 'Value / units', minWidth: compactStocks ? 65 : 85, flex: 1.1, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)), cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset grid-value"><strong>{formatMoney(data.value)}</strong><small>({formatAmount(data.quantity)} units)</small></span> : null },
     { field: 'pnl', headerName: compactStocks ? 'Unreal.' : 'Unrealized', minWidth: compactStocks ? 56 : 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellRenderer: ({ data }: { data?: EquityGridRow }) => data?.pnl == null ? '—' : <span className="grid-pnl"><b>{data.pnl >= 0 ? '+' : ''}{formatMoney(data.pnl)}</b><small title="P/L as a percentage of recorded purchase cost">{formatPnlPercent(data.pnlPercent)}</small></span>, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'realizedPnl', headerName: compactStocks ? 'Real.' : 'Realized', minWidth: compactStocks ? 56 : 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellRenderer: ({ data }: { data?: EquityGridRow }) => data?.realizedPnl == null ? '—' : <span className="grid-pnl"><b>{data.realizedPnl >= 0 ? '+' : ''}{formatMoney(data.realizedPnl)}</b><small title="P/L as a percentage of recorded purchase cost">{formatPnlPercent(data.realizedPnlPercent)}</small></span>, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
