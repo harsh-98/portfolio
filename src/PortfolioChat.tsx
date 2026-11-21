@@ -168,7 +168,7 @@ export function PortfolioChat({ session }: { session: Session }) {
       </div>
       {error && <div className="chat-error" role="alert">{error}<button type="button" onClick={() => void load()}>Retry refresh</button></div>}
       <form className="chat-composer" onSubmit={(e) => { e.preventDefault(); void send() }}>
-        <label className="chat-sr-only" htmlFor="chat-draft">Message or goal</label><textarea id="chat-draft" ref={composer} value={draft} disabled={busy} maxLength={2000} rows={2} placeholder="Message or a goal…" onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }} />
+        <label className="chat-sr-only" htmlFor="chat-draft">Message or goal</label><textarea id="chat-draft" ref={composer} value={draft} readOnly={busy} maxLength={2000} rows={2} placeholder="Message or a goal…" onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }} />
         <button type="submit" disabled={busy || !draft.trim()} aria-label={busy ? 'Saving' : 'Send message'}><Send size={18} /></button><small>Enter to send · Shift + Enter for a new line{draft.length > 1800 ? ` · ${draft.length}/2000` : ''}</small>
       </form>
     </section>}
