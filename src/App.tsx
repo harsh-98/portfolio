@@ -1315,6 +1315,7 @@ function Dashboard({ session }: { session: Session }) {
   }}), [displayBrokerTransactions, selectedBrokerDetail])
   const displayedBuyCount = transactionGridRows.filter((transaction) => transaction.eventType === 'Buy').length
   const displayedSellCount = transactionGridRows.filter((transaction) => transaction.eventType === 'Sell').length
+  const hasDisplayedRealizedPnl = transactionGridRows.some((transaction) => transaction.realizedPnl != null)
   const displayedRealizedPnl = transactionGridRows.reduce((sum, transaction) => sum + Number(transaction.realizedPnl || 0), 0)
   const transactionColumns = useMemo<ColDef<TransactionGridRow>[]>(() => [
     { field: 'eventTime', headerName: 'Date', minWidth: 105, sort: 'desc', filter: 'agDateColumnFilter', valueFormatter: ({ value }) => value instanceof Date ? value.toLocaleDateString() : '—' },
@@ -1558,17 +1559,24 @@ function Dashboard({ session }: { session: Session }) {
                   {expandedEquity && (() => {
                     const asset = equityExposure.find((item) => item.symbol === expandedEquity)
                     if (!asset) return null
-                    const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
+                    const brokerDetails = new Map(asset.breakdown)
                     const assetTransactions = brokerageByAsset.get(asset.symbol) || []
+                    assetTransactions.forEach((transaction) => {
+                      if (!transaction.account) return
+                      const venue = platformIdentity(transaction.account)
+                      if (!brokerDetails.has(venue)) brokerDetails.set(venue, { value: 0, quantity: 0, costBasis: 0, pricedValue: 0, pricedQuantity: 0 })
+                    })
+                    const details = [...brokerDetails.entries()].sort((a, b) => b[1].value - a[1].value)
                     const assetRealizedRows = assetTransactions.filter((transaction) => transaction.realized_pnl_usd != null)
                     const assetRealizedPnl = assetRealizedRows.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd), 0)
                     const assetUnrealizedPnl = asset.pricedValue - asset.pricedCost
+                    const realizedVenues = [...new Set(assetRealizedRows.map((transaction) => transaction.account ? platformIdentity(transaction.account) : 'Unknown broker'))].join(', ')
                     return <div className="equity-drilldown">
-                      <div className="drilldown-head"><span><i /><strong>{asset.symbol} · {asset.name}</strong><small>Position by platform · choose a venue for transaction history</small></span><button onClick={() => setExpandedEquity(null)} aria-label="Close position detail"><X size={14} /></button></div>
+                      <div className="drilldown-head"><span><i /><strong>{asset.symbol} · {asset.name}</strong><small>All brokers · includes closed positions · choose a broker for trade history</small></span><button onClick={() => setExpandedEquity(null)} aria-label="Close position detail"><X size={14} /></button></div>
                       <div className="equity-drilldown-summary">
                         <span><small>Current value</small><strong>{formatMoney(asset.value)}</strong></span>
                         <span><small>Unrealized P/L</small><strong className={asset.pricedQuantity ? (assetUnrealizedPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{asset.pricedQuantity ? `${assetUnrealizedPnl >= 0 ? '+' : ''}${formatMoney(assetUnrealizedPnl)}` : '—'}<span className="pnl-return">{formatPnlPercent(pnlPercent(assetUnrealizedPnl, asset.pricedCost))}</span></strong></span>
-                        <span><small>Realized P/L</small><strong className={assetRealizedRows.length ? (assetRealizedPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{assetRealizedRows.length ? `${assetRealizedPnl >= 0 ? '+' : ''}${formatMoney(assetRealizedPnl)}` : '—'}<span className="pnl-return">{formatPnlPercent(realizedPnlPercent(assetRealizedRows))}</span></strong></span>
+                        <span><small>Reported realized P/L{realizedVenues ? ` · ${realizedVenues}` : ''}</small><strong className={assetRealizedRows.length ? (assetRealizedPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{assetRealizedRows.length ? `${assetRealizedPnl >= 0 ? '+' : ''}${formatMoney(assetRealizedPnl)}` : '—'}<span className="pnl-return">{formatPnlPercent(realizedPnlPercent(assetRealizedRows))}</span></strong></span>
                       </div>
                       <div className="equity-breakdown-labels"><span>Platform</span><span>Quantity / average</span><span>Value</span><span>Unrealized</span><span>Realized</span><span /></div>
                       <div className="asset-breakdown equity-breakdown">{details.map(([name, detail]) => {
@@ -1577,8 +1585,8 @@ function Dashboard({ session }: { session: Session }) {
                         const venueRealizedRows = venueTransactions.filter((transaction) => transaction.realized_pnl_usd != null)
                         const venueRealizedPnl = venueRealizedRows.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd), 0)
                         return <button key={name} onClick={() => venueTransactions.length && setSelectedBrokerDetail({ symbol: asset.symbol, venue: name })} disabled={!venueTransactions.length}>
-                          <span>{name}<small>{venueTransactions.length ? `${venueTransactions.length} transactions · click to open` : 'Position detail only'}</small></span>
-                          <span className="equity-quantity"><strong>{formatAmount(detail.quantity)} shares</strong><small>{detail.costBasis ? `Avg ${formatMoneyCents(detail.costBasis / detail.quantity)}` : 'Average cost pending'}</small></span>
+                          <span>{name}<small>{venueTransactions.length ? `${detail.quantity === 0 ? 'Closed · ' : ''}${venueTransactions.length} transactions · click to open` : 'Position detail only'}</small></span>
+                          <span className="equity-quantity"><strong>{formatAmount(detail.quantity)} shares</strong><small>{detail.costBasis ? `Avg ${formatMoneyCents(detail.costBasis / detail.quantity)}` : detail.quantity === 0 ? 'No current holding' : 'Average cost pending'}</small></span>
                           <b>{formatMoney(detail.value)}</b>
                           <em className={detail.costBasis ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detail.costBasis ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}<small className="pnl-return">{formatPnlPercent(pnlPercent(detailPnl, detail.costBasis))}</small></em>
                           <em className={venueRealizedRows.length ? (venueRealizedPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{venueRealizedRows.length ? `${venueRealizedPnl >= 0 ? '+' : ''}${formatMoney(venueRealizedPnl)}` : '—'}<small className="pnl-return">{formatPnlPercent(realizedPnlPercent(venueRealizedRows))}</small></em>
@@ -1587,7 +1595,7 @@ function Dashboard({ session }: { session: Session }) {
                       })}</div>
                     </div>
                   })()}
-                  {selectedBrokerDetail && <div className={`broker-drilldown ${brokerFullscreen ? 'fullscreen' : ''}`}><div className="drilldown-head"><span><i /><strong>{selectedBrokerDetail.symbol} · {selectedBrokerDetail.venue}</strong><small>{displayedBuyCount} buys · {displayedSellCount} sells · realized <b className={displayedRealizedPnl >= 0 ? 'value-positive' : 'value-negative'}>{displayedRealizedPnl >= 0 ? '+' : ''}{formatMoney(displayedRealizedPnl)}</b></small></span><div className="drilldown-actions"><button onClick={() => setBrokerFullscreen((value) => !value)} aria-label={brokerFullscreen ? 'Exit full screen' : 'Maximize transaction history'} title={brokerFullscreen ? 'Exit full screen' : 'Maximize'}>{brokerFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button><button onClick={() => { setSelectedBrokerDetail(null); setBrokerFullscreen(false) }} aria-label="Close transaction history"><X size={14} /></button></div></div><div className="broker-grid"><AgGridReact<TransactionGridRow> theme={portfolioGridTheme} rowData={transactionGridRows} columnDefs={transactionColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} getRowId={({ data }) => data.id} rowHeight={34} headerHeight={31} floatingFiltersHeight={29} /></div></div>}
+                  {selectedBrokerDetail && <div className={`broker-drilldown ${brokerFullscreen ? 'fullscreen' : ''}`}><div className="drilldown-head"><span><i /><strong>{selectedBrokerDetail.symbol} · {selectedBrokerDetail.venue}</strong><small>{displayedBuyCount} buys · {displayedSellCount} sells · reported realized <b className={!hasDisplayedRealizedPnl ? '' : displayedRealizedPnl >= 0 ? 'value-positive' : 'value-negative'}>{hasDisplayedRealizedPnl ? `${displayedRealizedPnl >= 0 ? '+' : ''}${formatMoney(displayedRealizedPnl)}` : 'Not reported'}</b></small></span><div className="drilldown-actions"><button onClick={() => setBrokerFullscreen((value) => !value)} aria-label={brokerFullscreen ? 'Exit full screen' : 'Maximize transaction history'} title={brokerFullscreen ? 'Exit full screen' : 'Maximize'}>{brokerFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button><button onClick={() => { setSelectedBrokerDetail(null); setBrokerFullscreen(false) }} aria-label="Close transaction history"><X size={14} /></button></div></div><div className="broker-grid"><AgGridReact<TransactionGridRow> theme={portfolioGridTheme} rowData={transactionGridRows} columnDefs={transactionColumns} defaultColDef={{ sortable: true, resizable: true, floatingFilter: true }} getRowId={({ data }) => data.id} rowHeight={34} headerHeight={31} floatingFiltersHeight={29} /></div></div>}
                 </article>
 
                 <aside className={overviewPanelClass('spending', 'overview-spending')}>
