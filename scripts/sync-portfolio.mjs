@@ -1212,7 +1212,11 @@ async function replaceSource(source, positions) {
     for (const position of positions) {
       const previous = existingBySourceKey.get(position.source_key);
       const retainedCostBasis = previous?.cost_basis_usd ?? null;
-      const unitCostRule = unitCostRules.get(position.asset.symbol.toUpperCase());
+      // A verified wallet lot can have a different cost from the same token
+      // held elsewhere. Keep explicit position rules scoped to this source key.
+      const positionCostRule = previous?.metadata?.cost_basis_override;
+      const hasPositionCostRule = positionCostRule?.scope === "position" && positionCostRule.unit_cost_usd != null && Number.isFinite(Number(positionCostRule.unit_cost_usd)) && Number(positionCostRule.unit_cost_usd) >= 0;
+      const unitCostRule = hasPositionCostRule ? positionCostRule : unitCostRules.get(position.asset.symbol.toUpperCase());
       const valuationRule = valuationRules.get(position.asset.symbol.toUpperCase());
       const override = source === "wio" ? previous?.metadata?.balance_override : null;
       const overrideTime = Date.parse(override?.effective_at || "");
