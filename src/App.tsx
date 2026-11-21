@@ -1282,6 +1282,26 @@ function Dashboard({ session }: { session: Session }) {
     { field: 'realizedPnl', headerName: compactStocks ? 'Real.' : 'Realized', minWidth: compactStocks ? 56 : 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellRenderer: ({ data }: { data?: EquityGridRow }) => data?.realizedPnl == null ? '—' : <span className="grid-pnl"><b>{data.realizedPnl >= 0 ? '+' : ''}{formatMoney(data.realizedPnl)}</b><small title="P/L as a percentage of recorded purchase cost">{formatPnlPercent(data.realizedPnlPercent)}</small></span>, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
     { field: 'allocation', headerName: compactStocks ? '%' : 'Alloc.', minWidth: compactStocks ? 30 : 50, flex: .6, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => `${Number(value).toFixed(1)}%` },
   ], [compactStocks, formatMoney, formatMoneyCents])
+  const formatDigitalPrice = useCallback((value: number) => new Intl.NumberFormat(displayCurrency === 'INR' ? 'en-IN' : 'en-US', {
+    style: 'currency', currency: displayCurrency, minimumFractionDigits: 2,
+    maximumFractionDigits: Math.abs(value * displayRate) < 1 ? 10 : Math.abs(value * displayRate) < 100 ? 6 : 2,
+  }).format(value * displayRate), [displayCurrency, displayRate])
+  const digitalGridRows = useMemo<EquityGridRow[]>(() => cryptoExposure.map((asset) => ({
+    symbol: asset.symbol, name: asset.name, quantity: asset.quantity, value: asset.value,
+    venueSplit: [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value).map(([name]) => name).join(' · '),
+    averageBuy: asset.pricedQuantity > 0 ? asset.pricedCost / asset.pricedQuantity : null,
+    currentPrice: asset.quantity > 0 ? asset.value / asset.quantity : null,
+    pnl: asset.pricedQuantity > 0 ? asset.pricedValue - asset.pricedCost : null,
+    pnlPercent: asset.pricedQuantity > 0 ? pnlPercent(asset.pricedValue - asset.pricedCost, asset.pricedCost) : null,
+    realizedPnl: null, realizedPnlPercent: null,
+    allocation: digitalAssetsTotal > 0 ? asset.value / digitalAssetsTotal * 100 : 0,
+  })), [cryptoExposure, digitalAssetsTotal])
+  const digitalColumns = useMemo<ColDef<EquityGridRow>[]>(() => equityColumns.filter((column) => column.field !== 'realizedPnl').map((column) => {
+    if (column.field !== 'averageBuy') return column
+    return { ...column, valueFormatter: ({ value }) => value == null ? '—' : formatDigitalPrice(Number(value)),
+      cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-average-now" title={`Average buy: ${data.averageBuy == null ? 'unknown' : formatDigitalPrice(data.averageBuy)} · Current price: ${data.currentPrice == null ? 'unknown' : formatDigitalPrice(data.currentPrice)}`}><span>{data.averageBuy == null ? '—' : formatDigitalPrice(data.averageBuy)}</span><small className={data.currentPrice == null || data.averageBuy == null || data.currentPrice === data.averageBuy ? '' : data.currentPrice > data.averageBuy ? 'value-positive' : 'value-negative'}>({data.currentPrice == null ? '—' : formatDigitalPrice(data.currentPrice)})</small></span> : null,
+    }
+  }), [equityColumns, formatDigitalPrice])
   const brokerageByAsset = useMemo(() => {
     const grouped = new Map<string, BrokerageTransaction[]>()
     brokerageTransactions.forEach((transaction) => {
@@ -1537,19 +1557,32 @@ function Dashboard({ session }: { session: Session }) {
                 </article>
 
                 <article className={overviewPanelClass('digital', 'overview-digital')}>
-                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>{formatMoney(digitalAssetsTotal)} total</h2></div><div className="panel-heading-actions"><div className="pnl-summary"><small>Total P/L</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong><em className={digitalPnl.value == null ? 'pnl-return' : digitalPnl.value >= 0 ? 'pnl-return value-positive' : 'pnl-return value-negative'}>{formatPnlPercent(digitalPnl.percent)}</em></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
-                  <div className="digital-columns" aria-hidden="true"><span>Asset / venue</span><span>Value / units</span><span>P/L</span><span>Alloc.</span></div>
-                  <div className="asset-rows digital-rows">{cryptoExposure.map((asset) => {
+                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>{formatMoney(digitalAssetsTotal)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong><em className={digitalPnl.value == null ? 'pnl-return' : digitalPnl.value >= 0 ? 'pnl-return value-positive' : 'pnl-return value-negative'}>{formatPnlPercent(digitalPnl.percent)}</em></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="equity-grid digital-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={digitalGridRows} columnDefs={digitalColumns} defaultColDef={{ sortable: true, resizable: true, suppressHeaderFilterButton: compactStocks }} getRowId={({ data }) => data.symbol} rowHeight={34} headerHeight={30} onRowClicked={({ data }) => data && setExpandedDigital(data.symbol)} /></div>
+                  <div className="equity-footer"><span>{cryptoExposure.length} assets · {formatMoney(cryptoExposure.reduce((sum, asset) => sum + asset.pricedCost, 0))} known cost</span><span>{digitalPnl.hasMissingCost ? 'Unrealized · known costs only' : 'Unrealized P/L'}</span></div>
+                  {expandedDigital && (() => {
+                    const asset = cryptoExposure.find((item) => item.symbol === expandedDigital)
+                    if (!asset) return null
                     const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
-                    const open = expandedDigital === asset.symbol
-                    const pnl = asset.pricedValue - asset.pricedCost
                     const hasCost = asset.pricedQuantity > 0
-                    return <div className={`expandable-asset ${open ? 'open' : ''}`} key={asset.symbol}>
-                      <button onClick={() => setExpandedDigital(open ? null : asset.symbol)}><ChevronRight size={13} /><span className="symbol-cell"><strong>{asset.symbol}</strong><small>{details.slice(0, 2).map(([name, detail]) => `${name} ${asset.value ? ((detail.value / asset.value) * 100).toFixed(0) : '0'}%`).join(' · ')}{details.length > 2 ? ` +${details.length - 2}` : ''}</small></span><span className="asset-value"><b>{formatMoney(asset.value)}</b><small>({formatAmount(asset.quantity)} units)</small></span><span className={hasCost ? (pnl >= 0 ? 'asset-pnl value-positive' : 'asset-pnl value-negative') : 'asset-pnl'}>{hasCost ? `${pnl >= 0 ? '+' : ''}${formatMoney(pnl)}` : 'Cost pending'}{hasCost && <small className="pnl-return">{formatPnlPercent(pnlPercent(pnl, asset.pricedCost))}</small>}</span><em>{crypto ? ((asset.value / crypto) * 100).toFixed(1) : '0.0'}%</em></button>
-                      {open && <div className="asset-breakdown digital-breakdown">{details.map(([name, detail]) => { const detailPnl = detail.pricedValue - detail.costBasis; const detailHasCost = detail.pricedQuantity > 0; return <div key={name}><span>{name}</span><strong>{formatAmount(detail.quantity)}</strong><small>{detailHasCost ? `Avg ${formatMoney(detail.costBasis / detail.pricedQuantity)}` : 'Average cost pending'}</small><b>{formatMoney(detail.value)}</b><em className={detailHasCost ? (detailPnl >= 0 ? 'value-positive' : 'value-negative') : ''}>{detailHasCost ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}{detailHasCost && <small className="pnl-return">{formatPnlPercent(pnlPercent(detailPnl, detail.costBasis))}</small>}</em></div> })}</div>}
+                    const pnl = asset.pricedValue - asset.pricedCost
+                    return <div className="equity-drilldown digital-drilldown">
+                      <div className="drilldown-head"><span><i /><strong>{asset.symbol} · {asset.name}</strong><small>Position by venue and network</small></span><button onClick={() => setExpandedDigital(null)} aria-label="Close digital asset detail"><X size={14} /></button></div>
+                      <div className="equity-drilldown-summary">
+                        <span><small>Current value</small><strong>{formatMoney(asset.value)}</strong></span>
+                        <span><small>Avg buy (now)</small><strong>{hasCost ? formatDigitalPrice(asset.pricedCost / asset.pricedQuantity) : '—'} <span>({asset.quantity > 0 ? formatDigitalPrice(asset.value / asset.quantity) : '—'})</span></strong></span>
+                        <span><small>Unrealized P/L</small><strong className={hasCost ? pnl >= 0 ? 'value-positive' : 'value-negative' : ''}>{hasCost ? `${pnl >= 0 ? '+' : ''}${formatMoney(pnl)}` : 'Cost pending'}<span className="pnl-return">{hasCost ? formatPnlPercent(pnlPercent(pnl, asset.pricedCost)) : '—'}</span></strong></span>
+                      </div>
+                      <div className="digital-venue-scroll"><table className="digital-venue-table">
+                        <thead><tr><th>Venue / network</th><th>Units / average</th><th>Value</th><th>Unrealized</th></tr></thead>
+                        <tbody>{details.map(([name, detail]) => {
+                          const detailPnl = detail.pricedValue - detail.costBasis
+                          const detailHasCost = detail.pricedQuantity > 0
+                          return <tr key={name}><td>{name}</td><td>{formatAmount(detail.quantity)}<small>{detailHasCost ? `Avg ${formatDigitalPrice(detail.costBasis / detail.pricedQuantity)}` : 'Cost pending'}</small></td><td>{formatMoney(detail.value)}</td><td className={detailHasCost ? detailPnl >= 0 ? 'value-positive' : 'value-negative' : ''}>{detailHasCost ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}<small>{detailHasCost ? formatPnlPercent(pnlPercent(detailPnl, detail.costBasis)) : '—'}</small></td></tr>
+                        })}</tbody>
+                      </table></div>
                     </div>
-                  })}</div>
-                  <div className="equity-footer"><span>{cryptoExposure.length} assets shown</span><span>{digitalPnl.hasMissingCost ? 'Unrealized · known costs only' : 'Unrealized P/L'}</span></div>
+                  })()}
                 </article>
 
                 <article className={overviewPanelClass('equities', 'overview-equities')}>

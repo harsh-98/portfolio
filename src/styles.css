@@ -748,3 +748,13 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .grid-average-now { display: flex; height: 100%; align-content: center; align-items: center; flex-wrap: wrap; column-gap: 3px; line-height: 1.15; font-size: 10px; }
 .grid-average-now small { font-size: 9px; }
 @media (max-width: 700px) { .equity-grid .grid-average-now { font-size: 9px; } .equity-grid .grid-average-now small { font-size: 8px; } }
+
+.overview-digital { position: relative; }
+.digital-venue-scroll { overflow: auto; max-height: calc(100% - 115px); margin-top: 12px; }
+.digital-venue-table { width: 100%; border-collapse: collapse; font: 10px 'DM Mono', monospace; }
+.digital-venue-table th, .digital-venue-table td { padding: 10px 7px; border-bottom: 1px solid var(--line); text-align: right; }
+.digital-venue-table th { color: #78858d; font-size: 8px; font-weight: 400; }
+.digital-venue-table th:first-child, .digital-venue-table td:first-child { text-align: left; overflow-wrap: anywhere; }
+.digital-venue-table small { display: block; font-size: 8px; margin-top: 3px; }
+.digital-venue-table td:nth-child(2) small { color: #78858d; }
+@media (max-width: 700px) { .digital-venue-table { font-size: 9px; } .digital-venue-table th, .digital-venue-table td { padding: 8px 4px; } .digital-venue-table small { font-size: 7px; } }
