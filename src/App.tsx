@@ -29,6 +29,7 @@ import { OptionHistory } from './OptionHistory'
 import { RiskPage } from './RiskPage'
 import { ReportsPage } from './ReportsPage'
 import { PortfolioChat } from './PortfolioChat'
+import { TickerThesis, ThesisRouter } from './TickerThesis'
 import { isConfigured, supabase } from './lib/supabase'
 import { effectiveAssetClass, usesStockQuotes } from './lib/asset-classification'
 import { fetchStockPrices } from './lib/stock-prices'
@@ -1277,7 +1278,7 @@ function Dashboard({ session }: { session: Session }) {
     allocation: equities ? (asset.value / equities) * 100 : 0,
   })), [brokerageTransactions, equities, equityExposure])
   const equityColumns = useMemo<ColDef<EquityGridRow>[]>(() => [
-    { field: 'symbol', headerName: compactStocks ? 'Asset' : 'Asset / venue', minWidth: compactStocks ? 58 : 105, flex: 1.8, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong>{data.symbol}</strong><small>{data.venueSplit || data.name}</small></span> : null },
+    { field: 'symbol', headerName: compactStocks ? 'Asset' : 'Asset / venue', minWidth: compactStocks ? 58 : 105, flex: 1.8, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset"><strong><TickerThesis symbol={data.symbol} /></strong><small>{data.venueSplit || data.name}</small></span> : null },
     { field: 'averageBuy', headerName: 'Avg buy (now)', minWidth: compactStocks ? 78 : 115, flex: 1.2, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : formatMoneyCents(Number(value)), cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-average-now" title={`Average buy: ${data.averageBuy == null ? 'unknown' : formatMoneyCents(data.averageBuy)} · Current price: ${data.currentPrice == null ? 'unknown' : formatMoneyCents(data.currentPrice)}`}><span>{data.averageBuy == null ? '—' : formatMoneyCents(data.averageBuy)}</span><small className={data.currentPrice == null || data.averageBuy == null || data.currentPrice === data.averageBuy ? '' : data.currentPrice > data.averageBuy ? 'value-positive' : 'value-negative'}>({data.currentPrice == null ? '—' : formatMoneyCents(data.currentPrice)})</small></span> : null },
     { field: 'value', headerName: compactStocks ? 'Value' : 'Value / units', minWidth: compactStocks ? 65 : 85, flex: 1.1, sort: 'desc', filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatMoney(Number(value)), cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-asset grid-value"><strong>{formatMoney(data.value)}</strong><small>({formatAmount(data.quantity)} units)</small></span> : null },
     { field: 'pnl', headerName: compactStocks ? 'Unreal.' : 'Unrealized', minWidth: compactStocks ? 56 : 65, flex: .9, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => value == null ? '—' : `${Number(value) >= 0 ? '+' : ''}${formatMoney(Number(value))}`, cellRenderer: ({ data }: { data?: EquityGridRow }) => data?.pnl == null ? '—' : <span className="grid-pnl"><b>{data.pnl >= 0 ? '+' : ''}{formatMoney(data.pnl)}</b><small title="P/L as a percentage of recorded purchase cost">{formatPnlPercent(data.pnlPercent)}</small></span>, cellClass: ({ value }) => value == null ? '' : Number(value) >= 0 ? 'grid-pnl-positive' : 'grid-pnl-negative' },
@@ -1424,7 +1425,7 @@ function Dashboard({ session }: { session: Session }) {
     }
   }), [positions, total])
   const holdingColumns = useMemo<ColDef<HoldingGridRow>[]>(() => [
-    { field: 'asset', headerName: 'Asset', minWidth: 110, pinned: 'left', filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: HoldingGridRow }) => data ? <span className="grid-asset"><strong>{data.asset}</strong><small>{data.name}</small></span> : null },
+    { field: 'asset', headerName: 'Asset', minWidth: 110, pinned: 'left', filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: HoldingGridRow }) => data ? <span className="grid-asset"><strong><TickerThesis symbol={data.asset} /></strong><small>{data.name}</small></span> : null },
     { field: 'account', headerName: 'Account', minWidth: 170, flex: 1, filter: 'agTextColumnFilter', cellRenderer: ({ data }: { data?: HoldingGridRow }) => data ? <span className="grid-asset"><strong>{data.account}</strong><small>{data.institution}</small></span> : null },
     { field: 'assetClass', headerName: 'Class', minWidth: 120, filter: 'agTextColumnFilter' },
     { field: 'quantity', headerName: 'Quantity', minWidth: 115, filter: 'agNumberColumnFilter', valueFormatter: ({ value }) => formatAmount(Number(value)) },
@@ -1512,7 +1513,7 @@ function Dashboard({ session }: { session: Session }) {
         {priceSaveStatus && <p className="asset-prices-note" role="status">{priceSaveStatus}</p>}
         {(livePriceDelayed || stockPriceDelayed) && <p className="asset-prices-note" role="status">{livePriceDelayed ? 'Crypto feed delayed. ' : ''}{stockPriceDelayed ? `${stockPriceError || 'Stock feed delayed.'} ` : ''}Last available prices remain below.</p>}
         {fxError && <p className="asset-prices-note" role="status">{fxError}</p>}
-        <div className="asset-price-sections">{assetPriceSections.map((section) => <section key={section.category} aria-label={`${section.category} prices`}><h3>{section.category}{section.category === 'Options' && <small>USD / contract</small>}{section.category === 'Equities' && <small>{stockPriceDelayed ? 'delayed' : lastStockPriceAt ? `fetched ${lastStockPriceAt.toLocaleTimeString()}` : 'fetching…'}</small>}{section.category === 'Other' && fxQuote && <small>FX · ECB {fxQuote.date}</small>}</h3><div className="asset-prices-list">{section.rows.map((row) => <article key={row.id} className="asset-price-row"><strong>{row.symbol === 'INR' ? 'USD/INR' : row.symbol}</strong><b>{row.symbol === 'INR' ? Number.isFinite(row.price) && row.price > 0 ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1 / row.price) : 'Unavailable' : formatUnitPrice(row.price)}</b></article>)}</div></section>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
+        <div className="asset-price-sections">{assetPriceSections.map((section) => <section key={section.category} aria-label={`${section.category} prices`}><h3>{section.category}{section.category === 'Options' && <small>USD / contract</small>}{section.category === 'Equities' && <small>{stockPriceDelayed ? 'delayed' : lastStockPriceAt ? `fetched ${lastStockPriceAt.toLocaleTimeString()}` : 'fetching…'}</small>}{section.category === 'Other' && fxQuote && <small>FX · ECB {fxQuote.date}</small>}</h3><div className="asset-prices-list">{section.rows.map((row) => <article key={row.id} className="asset-price-row"><strong><TickerThesis symbol={row.symbol}>{row.symbol === 'INR' ? 'USD/INR' : row.symbol}</TickerThesis></strong><b>{row.symbol === 'INR' ? Number.isFinite(row.price) && row.price > 0 ? new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(1 / row.price) : 'Unavailable' : formatUnitPrice(row.price)}</b></article>)}</div></section>)}{!visibleAssetPriceRows.length && <p>No matching assets.</p>}</div>
         <p className="asset-prices-note">{assetPriceRows.length} symbols</p>
       </dialog>
 
@@ -1731,6 +1732,7 @@ function Dashboard({ session }: { session: Session }) {
         </div>
       </main>
       {showHoldingForm && <HoldingForm accounts={accounts} onClose={() => setShowHoldingForm(false)} onSaved={load} />}
+      <ThesisRouter key={`thesis:${session.user.id}`} session={session} />
       <PortfolioChat key={session.user.id} session={session} goalsHost={goalsHost} />
     </div>
   )

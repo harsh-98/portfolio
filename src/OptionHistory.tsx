@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react'
 import type { BrokerageTransaction } from './types'
 import './options.css'
+import { TickerThesis } from './TickerThesis'
 import { optionRealizedPnl } from './lib/option-pnl'
 
 const signedUsd = (value: number) => `${value >= 0 ? '+' : ''}${usd.format(value)}`
@@ -42,7 +43,7 @@ export function OptionHistory({ transactions }: { transactions: BrokerageTransac
     <p>Calculated from matching buys and sells using FIFO within each broker and option series. Expirations realize the matched purchase cost as a loss. Open positions are excluded; unmatched trades show “—”. Includes sold and expired options. Premiums are USD per share; totals include reported fees. Each standard contract covers 100 shares.</p>
     {!groups.length && <p>No option transactions in the imported history.</p>}
     <div className="option-history-list">{groups.map((group) => <article key={JSON.stringify([group.symbol, group.venue])}>
-      <header><strong>{group.symbol}</strong><small>{group.venue}</small><b className={group.realizedPnl == null ? '' : group.realizedPnl >= 0 ? 'value-positive' : 'value-negative'}>Realized {group.realizedPnl == null ? '—' : signedUsd(group.realizedPnl)}{group.incomplete ? ' · partial' : ''}</b></header>
+      <header><strong><TickerThesis symbol={group.symbol} /></strong><small>{group.venue}</small><b className={group.realizedPnl == null ? '' : group.realizedPnl >= 0 ? 'value-positive' : 'value-negative'}>Realized {group.realizedPnl == null ? '—' : signedUsd(group.realizedPnl)}{group.incomplete ? ' · partial' : ''}</b></header>
       <div className="option-table-scroll"><table>
         <thead><tr><th>Date</th><th>Trade</th><th>Contracts</th><th>Premium</th><th>Fees</th><th>Paid / received</th><th>Realized P/L</th></tr></thead>
         <tbody>{group.calculatedRows.map(({ transaction: row, realizedPnl }) => <tr key={row.id}>
