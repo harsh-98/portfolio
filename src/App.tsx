@@ -28,6 +28,7 @@ import { PortfolioSparkline } from './PortfolioSparkline'
 import { OptionHistory } from './OptionHistory'
 import { RiskPage } from './RiskPage'
 import { ReportsPage } from './ReportsPage'
+import { PortfolioChat } from './PortfolioChat'
 import { isConfigured, supabase } from './lib/supabase'
 import { effectiveAssetClass, usesStockQuotes } from './lib/asset-classification'
 import { fetchStockPrices } from './lib/stock-prices'
@@ -1729,6 +1730,7 @@ function Dashboard({ session }: { session: Session }) {
         </div>
       </main>
       {showHoldingForm && <HoldingForm accounts={accounts} onClose={() => setShowHoldingForm(false)} onSaved={load} />}
+      <PortfolioChat key={session.user.id} session={session} />
     </div>
   )
 }

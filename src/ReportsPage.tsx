@@ -63,7 +63,7 @@ export function ReportsPage({ positions, positionsLoading, currentTotal, userId 
         reports = [{ version: 1, key: `pdf-${crypto.randomUUID()}`, title: file.name.replace(/\.pdf$/i, '').slice(0, 160), created_at: new Date().toISOString(), kind: 'pdf', summary: 'Uploaded report', pdf_base64: btoa(binary) }]
       } else { const bundle = JSON.parse(await file.text()); reports = bundle.version === 1 && Array.isArray(bundle.reports) ? bundle.reports : [bundle] }
       if (!reports.length || reports.length > 50 || !reports.every(validReport)) throw new Error('The report bundle is incomplete or unsupported.')
-      const owned = await supabase.from('assets').select('id').eq('owner_id', userId).limit(1); if (owned.error) throw owned.error; if (!owned.data?.length) throw new Error('Report upload is available to the portfolio owner.')
+      const owned = await supabase.from('positions').select('id').eq('owner_id', userId).limit(1); if (owned.error) throw owned.error; if (!owned.data?.length) throw new Error('Report upload is available to the portfolio owner.')
       let saved = 0
       for (const item of reports) {
         const network = `report:${item.key}`; const existing = await supabase.from('assets').select('id').eq('owner_id', userId).eq('symbol', '_PORTFOLIO_REPORT').eq('network', network).maybeSingle(); if (existing.error) throw existing.error
