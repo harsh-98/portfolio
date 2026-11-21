@@ -25,6 +25,7 @@ import {
   X,
 } from 'lucide-react'
 import { PortfolioSparkline } from './PortfolioSparkline'
+import { OptionHistory } from './OptionHistory'
 import { RiskPage } from './RiskPage'
 import { ReportsPage } from './ReportsPage'
 import { isConfigured, supabase } from './lib/supabase'
@@ -1553,6 +1554,7 @@ function Dashboard({ session }: { session: Session }) {
                   <div className={`stock-price-status ${stockPriceDelayed ? 'delayed' : ''}`} role="status"><span>{stockPriceError || (lastStockPriceAt ? `Prices fetched ${lastStockPriceAt.toLocaleTimeString()} · refresh every 1m` : 'Fetching stock prices…')}</span><button type="button" disabled={priceRefreshBusy || loading} onClick={() => void refreshDisplayedPrices()}>{priceRefreshBusy ? 'Updating…' : 'Update prices'}</button></div>
                   <div className="equity-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={equityGridRows} columnDefs={equityColumns} defaultColDef={{ sortable: true, resizable: true, suppressHeaderFilterButton: compactStocks }} getRowId={({ data }) => data.symbol} rowHeight={34} headerHeight={30} onRowClicked={({ data }) => data && setExpandedEquity(data.symbol)} /></div>
                   <div className="equity-footer"><span>{equityExposure.length} securities · {formatMoney(stockCostBasis)} known cost</span><span>{brokerageTransactions.length ? 'Realized P/L from XTB history' : 'Realized P/L unavailable'}</span></div>
+                  <OptionHistory transactions={brokerageTransactions} />
                   {expandedEquity && (() => {
                     const asset = equityExposure.find((item) => item.symbol === expandedEquity)
                     if (!asset) return null
