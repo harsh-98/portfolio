@@ -35,7 +35,7 @@ export function OptionHistory({ transactions }: { transactions: BrokerageTransac
   const hasRealized = groups.some((group) => group.realizedPnl != null)
 
   return <>
-    <button type="button" className="option-history-button" onClick={() => dialog.current?.showModal()}>Options · buy / sell history <span>{groups.length} option series</span><b className={hasRealized ? total >= 0 ? 'value-positive' : 'value-negative' : ''}>Realized {hasRealized ? signedUsd(total) : '—'}{incomplete ? ' · partial' : ''}</b></button>
+    <button type="button" className="option-history-button" onClick={() => dialog.current?.showModal()}><span className="option-history-button-label">Options · buy / sell history <small>{groups.length} option series</small></span><b className={hasRealized ? total >= 0 ? 'value-positive' : 'value-negative' : ''}>Realized {hasRealized ? signedUsd(total) : '—'}{incomplete ? ' · partial' : ''}</b></button>
     <dialog ref={dialog} className="option-history" aria-labelledby="option-history-title" onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close() }}>
     <div className="option-history-heading"><h2 id="option-history-title">Options history</h2><button type="button" aria-label="Close options history" onClick={() => dialog.current?.close()}>×</button></div>
     <div className="option-realized-total"><span>Realized P/L · after fees{incomplete ? ' · known trades only' : ''}</span><strong className={hasRealized ? total >= 0 ? 'value-positive' : 'value-negative' : ''}>{hasRealized ? signedUsd(total) : '—'}</strong></div>
