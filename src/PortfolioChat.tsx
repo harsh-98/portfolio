@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { Session } from '@supabase/supabase-js'
 import { MessageCircle, Pin, RefreshCw, Send, Trash2, X } from 'lucide-react'
 import { supabase } from './lib/supabase'
@@ -15,10 +16,12 @@ type Row = { id: string; owner_id: string; created_at: string; metadata: Record<
 const label = (value: unknown) => typeof value === 'string' ? value.slice(0, 60) : 'Member'
 const failure = (error: unknown) => error instanceof Error ? error.message : typeof error === 'object' && error && 'message' in error ? String(error.message) : 'Please try again.'
 
-export function PortfolioChat({ session }: { session: Session }) {
+export function PortfolioChat({ session, goalsHost }: { session: Session; goalsHost: HTMLElement | null }) {
   const userId = session.user.id
   const author = label(session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Member')
   const [open, setOpen] = useState(false)
+  const [selectedGoal, setSelectedGoal] = useState<string | null>(null)
+  const goalMenu = useRef<HTMLDetailsElement>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [pins, setPins] = useState<GoalPin[]>([])
   const [draft, setDraft] = useState('')
@@ -102,6 +105,24 @@ export function PortfolioChat({ session }: { session: Session }) {
   }, [messages, open])
 
   useEffect(() => { if (open) { firstLoad.current = true; composer.current?.focus() } }, [open])
+  useEffect(() => {
+    if (!open || !selectedGoal) return
+    const message = document.getElementById(`chat-${selectedGoal}`)
+    message?.scrollIntoView({ block: 'center' })
+    message?.focus({ preventScroll: true })
+    nearBottom.current = false
+    firstLoad.current = false
+    setSelectedGoal(null)
+  }, [open, selectedGoal])
+
+  useEffect(() => {
+    const dismiss = (event: PointerEvent) => {
+      if (goalMenu.current && !goalMenu.current.contains(event.target as Node)) goalMenu.current.open = false
+    }
+    document.addEventListener('pointerdown', dismiss)
+    return () => document.removeEventListener('pointerdown', dismiss)
+  }, [])
+
   function close() { setOpen(false); setConfirmDelete(null); launcher.current?.focus() }
 
   async function send() {
@@ -146,10 +167,21 @@ export function PortfolioChat({ session }: { session: Session }) {
   }
 
   const goals = messages.filter((m) => pins.some((p) => p.messageId === m.id))
-  return <div className="portfolio-chat">
-    {open && <section id="portfolio-chat-panel" className="chat-panel" aria-label="Shared chat and goals" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); close() } }}>
-      <header className="chat-header"><div><strong><span aria-hidden="true">#</span> Chat & goals</strong></div><button type="button" onClick={() => void load()} aria-label="Refresh chat" title="Refresh chat"><RefreshCw size={13} /></button><button type="button" onClick={close} aria-label="Close chat"><X size={15} /></button></header>
-      {goals.length > 0 && <details className="chat-goals"><summary><Pin size={13} />Pinned goals <span>{goals.length}</span></summary><div>{goals.map((m) => <button type="button" key={m.id} onClick={() => { document.getElementById(`chat-${m.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }); document.getElementById(`chat-${m.id}`)?.focus({ preventScroll: true }) }}><span>{m.body}</span><small>{[...new Set(pins.filter((p) => p.messageId === m.id).map((p) => p.owner_id === userId ? 'you' : p.author))].join(' & ')}</small></button>)}</div></details>}
+  return <>
+    {goalsHost && createPortal(<details className="header-goals" ref={goalMenu} onKeyDown={(event) => { if (event.key === 'Escape' && goalMenu.current) { event.stopPropagation(); goalMenu.current.open = false; goalMenu.current.querySelector('summary')?.focus() } }}>
+      <summary aria-label={`Pinned goals, ${goals.length}`}><Pin size={13} /><span>Goals</span><small>{goals.length}</small></summary>
+      <section className="header-goals-panel" aria-label="Pinned goals">
+        <header><strong>Pinned goals</strong><button type="button" onClick={() => void load()} aria-label="Refresh pinned goals"><RefreshCw size={13} /></button></header>
+        {loading && <p>Loading goals…</p>}
+        {!loading && !goals.length && <p>Pin a message in the chat to add a shared goal.</p>}
+        <div className="header-goals-list">{goals.map((m) => <button type="button" key={m.id} onClick={() => { if (goalMenu.current) goalMenu.current.open = false; setOpen(true); setSelectedGoal(m.id) }}><span>{m.body}</span><small>Pinned by {[...new Set(pins.filter((p) => p.messageId === m.id).map((p) => p.owner_id === userId ? 'you' : p.author))].join(' & ')}</small></button>)}</div>
+        {error && <p role="alert">{error}</p>}
+      </section>
+    </details>, goalsHost)}
+    <div className="portfolio-chat">
+    {open && <section id="portfolio-chat-panel" className="chat-panel" aria-label="Shared chat" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); close() } }}>
+      <header className="chat-header"><div><strong><span aria-hidden="true">#</span> Chat</strong></div><button type="button" onClick={() => void load()} aria-label="Refresh chat" title="Refresh chat"><RefreshCw size={13} /></button><button type="button" onClick={close} aria-label="Close chat"><X size={15} /></button></header>
+
       <div className="chat-timeline" ref={timeline} role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions" onScroll={() => { const el = timeline.current; if (el) nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 70 }}>
         {hasOlder && <button type="button" className="chat-older" disabled={busy} onClick={() => { nearBottom.current = false; setLimit((v) => v + 50) }}>Load earlier messages</button>}
         {loading && <p className="chat-empty">Loading conversation…</p>}
@@ -175,4 +207,5 @@ export function PortfolioChat({ session }: { session: Session }) {
     </section>}
     <button type="button" ref={launcher} className="chat-launcher" aria-label={open ? 'Close shared chat' : `Open shared chat${unread ? `, ${unread} new messages` : ''}`} aria-expanded={open} aria-controls="portfolio-chat-panel" onClick={() => open ? close() : setOpen(true)}>{open ? <X size={17} /> : <MessageCircle size={18} />}{!open && unread > 0 && <b>{unread > 9 ? '9+' : unread}</b>}</button>
   </div>
+  </>
 }
