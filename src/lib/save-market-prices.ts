@@ -34,7 +34,7 @@ export async function saveMarketPrices(client: SupabaseClient, positions: Positi
       kind = 'Daily reference'
     } else if (['crypto', 'stablecoin'].includes(assetClass) || ['XAUT', 'XAUT0', 'PAXG'].includes(symbol)) {
       if (rateTokens.has(symbol)) { unavailable.add(symbol); continue }
-      const ticker = ['WETH', 'STETH', 'EETH'].includes(symbol) ? 'ETH' : ['WBTC', 'UBTC', 'BTCB'].includes(symbol) ? 'BTC' : symbol === 'XAUT' ? 'XAUT0' : symbol
+      const ticker = ['WETH', 'STETH', 'EETH'].includes(symbol) ? 'ETH' : ['WBTC', 'UBTC', 'BTCB', 'BBTC'].includes(symbol) ? 'BTC' : symbol === 'XAUT' ? 'XAUT0' : symbol
       const quote = quotes.crypto.get(ticker)
       price = quote?.price
       source = quote?.source || ''

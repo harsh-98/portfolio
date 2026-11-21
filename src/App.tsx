@@ -183,7 +183,7 @@ function spendTransactionUrl(transaction: SpendTransaction) {
 
 function canonicalCryptoSymbol(symbol: string) {
   const normalized = symbol.toUpperCase()
-  if (['WBTC', 'UBTC', 'BTCB'].includes(normalized)) return 'BTC'
+  if (['WBTC', 'UBTC', 'BTCB', 'BBTC'].includes(normalized)) return 'BTC'
   if (['WETH', 'STETH', 'WSTETH', 'RETH', 'WEETH', 'EETH'].includes(normalized)) return 'ETH'
   if (['XAUT0', 'XAUT'].includes(normalized)) return 'XAUT'
   if (normalized === 'RUSDC') return 'rUSDC'
@@ -193,7 +193,7 @@ function canonicalCryptoSymbol(symbol: string) {
 function livePriceSymbol(symbol: string) {
   const normalized = symbol.toUpperCase()
   if (['WETH', 'STETH', 'WSTETH', 'RETH', 'WEETH', 'EETH'].includes(normalized)) return 'ETH'
-  if (['WBTC', 'UBTC', 'BTCB'].includes(normalized)) return 'BTC'
+  if (['WBTC', 'UBTC', 'BTCB', 'BBTC'].includes(normalized)) return 'BTC'
   if (normalized === 'XAUT') return 'XAUT0'
   return normalized
 }
