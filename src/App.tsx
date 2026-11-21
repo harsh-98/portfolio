@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { PortfolioSparkline } from './PortfolioSparkline'
 import { OptionHistory } from './OptionHistory'
+import { CryptoRealizedHistory } from './CryptoRealizedHistory'
 import { RiskPage } from './RiskPage'
 import { ReportsPage } from './ReportsPage'
 import { PortfolioChat } from './PortfolioChat'
@@ -1289,6 +1290,9 @@ function Dashboard({ session }: { session: Session }) {
     style: 'currency', currency: displayCurrency, minimumFractionDigits: 2,
     maximumFractionDigits: Math.abs(value * displayRate) < 1 ? 10 : Math.abs(value * displayRate) < 100 ? 6 : 2,
   }).format(value * displayRate), [displayCurrency, displayRate])
+  const digitalRealizedTransactions = useMemo(() => brokerageTransactions.filter((transaction) => transaction.metadata?.instrument_type === 'crypto'), [brokerageTransactions])
+  const digitalKnownRealized = digitalRealizedTransactions.filter((transaction) => transaction.realized_pnl_usd != null)
+  const digitalRealizedTotal = digitalKnownRealized.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd), 0)
   const digitalGridRows = useMemo<EquityGridRow[]>(() => cryptoExposure.map((asset) => ({
     symbol: asset.symbol, name: asset.name, quantity: asset.quantity, value: asset.value,
     venueSplit: [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value).map(([name]) => name).join(' · '),
@@ -1296,9 +1300,11 @@ function Dashboard({ session }: { session: Session }) {
     currentPrice: asset.quantity > 0 ? asset.value / asset.quantity : null,
     pnl: asset.pricedQuantity > 0 ? asset.pricedValue - asset.pricedCost : null,
     pnlPercent: asset.pricedQuantity > 0 ? pnlPercent(asset.pricedValue - asset.pricedCost, asset.pricedCost) : null,
-    realizedPnl: null, realizedPnlPercent: null,
+    realizedPnl: digitalRealizedTransactions.some((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol && row.realized_pnl_usd != null)
+      ? digitalRealizedTransactions.filter((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol).reduce((sum, row) => sum + Number(row.realized_pnl_usd || 0), 0) : null,
+    realizedPnlPercent: realizedPnlPercent(digitalRealizedTransactions.filter((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol)),
     allocation: digitalAssetsTotal > 0 ? asset.value / digitalAssetsTotal * 100 : 0,
-  })), [cryptoExposure, digitalAssetsTotal])
+  })), [cryptoExposure, digitalAssetsTotal, digitalRealizedTransactions])
   const digitalColumns = useMemo<ColDef<EquityGridRow>[]>(() => equityColumns.map((column) => {
     if (column.field !== 'averageBuy') return column
     return { ...column, valueFormatter: ({ value }) => value == null ? '—' : formatDigitalPrice(Number(value)),
@@ -1386,7 +1392,7 @@ function Dashboard({ session }: { session: Session }) {
       ? [...compositionPoint.platforms.entries()].map(([platform, value]) => ({ platform, value, quantity: null as number | null, start: firstRangeCryptoPoint?.platforms.get(platform) || 0 })).sort((a, b) => b.value - a.value)
       : [...(compositionPoint.assets.get(selectedCryptoPlatform)?.values() || [])].map((asset) => ({ platform: asset.label, value: asset.value, quantity: asset.quantity, start: firstRangeCryptoPoint?.assets.get(selectedCryptoPlatform)?.get(asset.label)?.value || 0 })).sort((a, b) => b.value - a.value)
     : []
-  const stockTransactions = brokerageTransactions.filter((transaction) => transaction.asset?.symbol.toUpperCase() !== 'IAU')
+  const stockTransactions = brokerageTransactions.filter((transaction) => transaction.metadata?.instrument_type !== 'crypto' && transaction.asset?.symbol.toUpperCase() !== 'IAU')
   const realizedXtb = stockTransactions.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd || 0), 0)
   const realizedXtbPercent = realizedPnlPercent(stockTransactions)
   const cardBalances = positions.filter((position) => { const source = cardSourceForPosition(position); return source && selectedCardSources.includes(source) }).sort((a, b) => Number(b.value_usd) - Number(a.value_usd))
@@ -1560,9 +1566,10 @@ function Dashboard({ session }: { session: Session }) {
                 </article>
 
                 <article className={overviewPanelClass('digital', 'overview-digital')}>
-                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>{formatMoney(digitalAssetsTotal)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong><em className={digitalPnl.value == null ? 'pnl-return' : digitalPnl.value >= 0 ? 'pnl-return value-positive' : 'pnl-return value-negative'}>{formatPnlPercent(digitalPnl.percent)}</em></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>{formatMoney(digitalAssetsTotal)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong><em className={digitalPnl.value == null ? 'pnl-return' : digitalPnl.value >= 0 ? 'pnl-return value-positive' : 'pnl-return value-negative'}>{formatPnlPercent(digitalPnl.percent)}</em></span><span><small>Realized</small><strong className={!digitalKnownRealized.length ? '' : digitalRealizedTotal >= 0 ? 'value-positive' : 'value-negative'}>{digitalKnownRealized.length ? `${digitalRealizedTotal >= 0 ? '+' : ''}${formatMoney(digitalRealizedTotal)}` : '—'}</strong><em>{formatPnlPercent(realizedPnlPercent(digitalRealizedTransactions))}</em></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className="equity-grid digital-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={digitalGridRows} columnDefs={digitalColumns} defaultColDef={{ sortable: true, resizable: true, suppressHeaderFilterButton: compactStocks }} getRowId={({ data }) => data.symbol} rowHeight={34} headerHeight={30} onRowClicked={({ data }) => data && setExpandedDigital(data.symbol)} /></div>
                   <div className="equity-footer"><span>{cryptoExposure.length} assets · {formatMoney(cryptoExposure.reduce((sum, asset) => sum + asset.pricedCost, 0))} known cost</span><span>{digitalPnl.hasMissingCost ? 'Unrealized · known costs only' : 'Unrealized P/L'}</span></div>
+                  <CryptoRealizedHistory transactions={digitalRealizedTransactions} formatMoney={formatMoney} />
                   {expandedDigital && (() => {
                     const asset = cryptoExposure.find((item) => item.symbol === expandedDigital)
                     if (!asset) return null
