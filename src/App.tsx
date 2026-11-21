@@ -1296,7 +1296,7 @@ function Dashboard({ session }: { session: Session }) {
     realizedPnl: null, realizedPnlPercent: null,
     allocation: digitalAssetsTotal > 0 ? asset.value / digitalAssetsTotal * 100 : 0,
   })), [cryptoExposure, digitalAssetsTotal])
-  const digitalColumns = useMemo<ColDef<EquityGridRow>[]>(() => equityColumns.filter((column) => column.field !== 'realizedPnl').map((column) => {
+  const digitalColumns = useMemo<ColDef<EquityGridRow>[]>(() => equityColumns.map((column) => {
     if (column.field !== 'averageBuy') return column
     return { ...column, valueFormatter: ({ value }) => value == null ? '—' : formatDigitalPrice(Number(value)),
       cellRenderer: ({ data }: { data?: EquityGridRow }) => data ? <span className="grid-average-now" title={`Average buy: ${data.averageBuy == null ? 'unknown' : formatDigitalPrice(data.averageBuy)} · Current price: ${data.currentPrice == null ? 'unknown' : formatDigitalPrice(data.currentPrice)}`}><span>{data.averageBuy == null ? '—' : formatDigitalPrice(data.averageBuy)}</span><small className={data.currentPrice == null || data.averageBuy == null || data.currentPrice === data.averageBuy ? '' : data.currentPrice > data.averageBuy ? 'value-positive' : 'value-negative'}>({data.currentPrice == null ? '—' : formatDigitalPrice(data.currentPrice)})</small></span> : null,
