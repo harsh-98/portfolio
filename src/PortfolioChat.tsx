@@ -148,17 +148,18 @@ export function PortfolioChat({ session }: { session: Session }) {
   const goals = messages.filter((m) => pins.some((p) => p.messageId === m.id))
   return <div className="portfolio-chat">
     {open && <section id="portfolio-chat-panel" className="chat-panel" aria-label="Shared chat and goals" onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); close() } }}>
-      <header className="chat-header"><div><strong>Chat & goals</strong><small>A shared space for the two of you</small></div><button type="button" onClick={() => void load()} aria-label="Refresh chat" title="Refresh chat"><RefreshCw size={16} /></button><button type="button" onClick={close} aria-label="Close chat"><X size={19} /></button></header>
-      {goals.length > 0 && <details className="chat-goals" open><summary><Pin size={13} />Pinned goals <span>{goals.length}</span></summary><div>{goals.map((m) => <button type="button" key={m.id} onClick={() => { document.getElementById(`chat-${m.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }); document.getElementById(`chat-${m.id}`)?.focus({ preventScroll: true }) }}><span>{m.body}</span><small>{[...new Set(pins.filter((p) => p.messageId === m.id).map((p) => p.owner_id === userId ? 'you' : p.author))].join(' & ')}</small></button>)}</div></details>}
+      <header className="chat-header"><div><strong><span aria-hidden="true">#</span> Chat & goals</strong></div><button type="button" onClick={() => void load()} aria-label="Refresh chat" title="Refresh chat"><RefreshCw size={13} /></button><button type="button" onClick={close} aria-label="Close chat"><X size={15} /></button></header>
+      {goals.length > 0 && <details className="chat-goals"><summary><Pin size={13} />Pinned goals <span>{goals.length}</span></summary><div>{goals.map((m) => <button type="button" key={m.id} onClick={() => { document.getElementById(`chat-${m.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }); document.getElementById(`chat-${m.id}`)?.focus({ preventScroll: true }) }}><span>{m.body}</span><small>{[...new Set(pins.filter((p) => p.messageId === m.id).map((p) => p.owner_id === userId ? 'you' : p.author))].join(' & ')}</small></button>)}</div></details>}
       <div className="chat-timeline" ref={timeline} role="log" aria-label="Messages" aria-live="polite" aria-relevant="additions" onScroll={() => { const el = timeline.current; if (el) nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 70 }}>
         {hasOlder && <button type="button" className="chat-older" disabled={busy} onClick={() => { nearBottom.current = false; setLimit((v) => v + 50) }}>Load earlier messages</button>}
         {loading && <p className="chat-empty">Loading conversation…</p>}
-        {!loading && !messages.length && <div className="chat-empty"><MessageCircle size={25} /><strong>Your shared space</strong><p>Send a message or write a goal.<br />Use the pin on a message to keep it above the chat.</p></div>}
+        {!loading && !messages.length && <div className="chat-empty"><MessageCircle size={20} /><strong>Just the two of you</strong><p>Say something. Pin a goal.</p></div>}
         {messages.map((m) => {
           const own = m.owner_id === userId
           const ownPin = pins.some((p) => p.messageId === m.id && p.owner_id === userId)
           const pinned = pins.some((p) => p.messageId === m.id)
           return <article id={`chat-${m.id}`} tabIndex={-1} className={`chat-message${own ? ' chat-own' : ''}`} key={m.id}>
+            <span className="chat-avatar" aria-hidden="true">{(own ? author : m.author).slice(0, 1).toUpperCase()}</span>
             <div className="chat-message-meta"><strong>{own ? 'You' : m.author}</strong><time dateTime={m.created_at} title={new Date(m.created_at).toLocaleString()}>{new Date(m.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {new Date(m.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</time></div>
             <p>{m.body}</p>
             <div className="chat-message-actions">{pinned && <small><Pin size={10} />Goal</small>}<button type="button" className={ownPin ? 'chat-pinned' : ''} disabled={busy} aria-label={ownPin ? 'Remove your pin' : 'Pin message as a goal'} aria-pressed={ownPin} title={ownPin ? 'Remove your pin (other people’s pins remain)' : 'Pin as a shared goal'} onClick={() => void togglePin(m)}><Pin size={14} /></button>{own && <button type="button" disabled={busy} aria-label="Delete your message" title="Delete your message" onClick={() => setConfirmDelete(m.id)}><Trash2 size={14} /></button>}</div>
@@ -168,10 +169,10 @@ export function PortfolioChat({ session }: { session: Session }) {
       </div>
       {error && <div className="chat-error" role="alert">{error}<button type="button" onClick={() => void load()}>Retry refresh</button></div>}
       <form className="chat-composer" onSubmit={(e) => { e.preventDefault(); void send() }}>
-        <label className="chat-sr-only" htmlFor="chat-draft">Message or goal</label><textarea id="chat-draft" ref={composer} value={draft} readOnly={busy} maxLength={2000} rows={2} placeholder="Message or a goal…" onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }} />
-        <button type="submit" disabled={busy || !draft.trim()} aria-label={busy ? 'Saving' : 'Send message'}><Send size={18} /></button><small>Enter to send · Shift + Enter for a new line{draft.length > 1800 ? ` · ${draft.length}/2000` : ''}</small>
+        <label className="chat-sr-only" htmlFor="chat-draft">Message or goal</label><textarea id="chat-draft" ref={composer} value={draft} readOnly={busy} maxLength={2000} rows={1} placeholder="Message…" onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void send() } }} />
+        <button type="submit" disabled={busy || !draft.trim()} aria-label={busy ? 'Saving' : 'Send message'}><Send size={15} /></button>{draft.length > 1800 && <small>{draft.length}/2000</small>}
       </form>
     </section>}
-    <button type="button" ref={launcher} className="chat-launcher" aria-label={open ? 'Close shared chat' : `Open shared chat${unread ? `, ${unread} new messages` : ''}`} aria-expanded={open} aria-controls="portfolio-chat-panel" onClick={() => open ? close() : setOpen(true)}>{open ? <X size={21} /> : <MessageCircle size={22} />}<span>{open ? 'Close' : 'Chat'}{!open && unread > 0 && <b>{unread > 9 ? '9+' : unread}</b>}</span></button>
+    <button type="button" ref={launcher} className="chat-launcher" aria-label={open ? 'Close shared chat' : `Open shared chat${unread ? `, ${unread} new messages` : ''}`} aria-expanded={open} aria-controls="portfolio-chat-panel" onClick={() => open ? close() : setOpen(true)}>{open ? <X size={17} /> : <MessageCircle size={18} />}{!open && unread > 0 && <b>{unread > 9 ? '9+' : unread}</b>}</button>
   </div>
 }
