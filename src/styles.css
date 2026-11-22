@@ -773,3 +773,9 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
   .overview-digital .panel-heading-actions { gap: 6px; }
   .overview-digital .equity-footer { gap: 8px; font-size: 8px; }
 }
+
+/* Keep recorded trades reachable while an asset's holdings cover the panel. */
+.digital-drilldown { display: flex; flex-direction: column; }
+.digital-drilldown .drilldown-head, .digital-drilldown .equity-drilldown-summary { flex: 0 0 auto; }
+.digital-drilldown .digital-venue-scroll { flex: 1; min-height: 0; max-height: none; }
+.digital-drilldown .option-history-button { margin-top: 6px; }

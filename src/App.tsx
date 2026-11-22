@@ -1290,6 +1290,24 @@ function Dashboard({ session }: { session: Session }) {
     style: 'currency', currency: displayCurrency, minimumFractionDigits: 2,
     maximumFractionDigits: Math.abs(value * displayRate) < 1 ? 10 : Math.abs(value * displayRate) < 100 ? 6 : 2,
   }).format(value * displayRate), [displayCurrency, displayRate])
+  const refreshCryptoSales = useCallback(async () => {
+    const result = await supabase.from('brokerage_transactions')
+      .select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,metadata,account:accounts(name,institution),asset:assets(symbol,name)')
+      .eq('metadata->>instrument_type', 'crypto').order('event_time', { ascending: false }).limit(1000).abortSignal(AbortSignal.timeout(15000))
+    if (result.error) throw new Error(`Unable to refresh recorded crypto sales: ${result.error.message}`)
+    const sales = (result.data || []) as unknown as BrokerageTransaction[]
+    setBrokerageTransactions((current) => [...current.filter((row) => row.metadata?.instrument_type !== 'crypto'), ...sales])
+  }, [])
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void refreshCryptoSales().catch(() => { /* The history dialog offers an explicit retry with an error message. */ })
+    }
+    document.addEventListener('visibilitychange', refresh)
+    return () => document.removeEventListener('visibilitychange', refresh)
+  }, [refreshCryptoSales])
+  useEffect(() => {
+    if (expandedDigital) void refreshCryptoSales().catch(() => { /* Preserve saved rows; retry is available in the history dialog. */ })
+  }, [expandedDigital, refreshCryptoSales])
   const digitalRealizedTransactions = useMemo(() => brokerageTransactions.filter((transaction) => transaction.metadata?.instrument_type === 'crypto'), [brokerageTransactions])
   const digitalKnownRealized = digitalRealizedTransactions.filter((transaction) => transaction.realized_pnl_usd != null)
   const digitalRealizedTotal = digitalKnownRealized.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd), 0)
@@ -1569,19 +1587,22 @@ function Dashboard({ session }: { session: Session }) {
                   <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>{formatMoney(digitalAssetsTotal)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong><em className={digitalPnl.value == null ? 'pnl-return' : digitalPnl.value >= 0 ? 'pnl-return value-positive' : 'pnl-return value-negative'}>{formatPnlPercent(digitalPnl.percent)}</em></span><span><small title={digitalKnownRealized.length < digitalRealizedTransactions.length ? 'Only sales with known purchase costs are included. Open Crypto realized history to inspect pending costs.' : 'Realized profit from recorded historical crypto sales'}>{digitalKnownRealized.length < digitalRealizedTransactions.length ? 'Realized · known' : 'Realized'}</small><strong className={!digitalKnownRealized.length ? '' : digitalRealizedTotal >= 0 ? 'value-positive' : 'value-negative'}>{digitalKnownRealized.length ? `${digitalRealizedTotal >= 0 ? '+' : ''}${formatMoney(digitalRealizedTotal)}` : '—'}</strong><em>{formatPnlPercent(realizedPnlPercent(digitalRealizedTransactions))}</em></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className="equity-grid digital-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={digitalGridRows} columnDefs={digitalColumns} defaultColDef={{ sortable: true, resizable: true, suppressHeaderFilterButton: compactStocks }} getRowId={({ data }) => data.symbol} rowHeight={32} headerHeight={28} onRowClicked={({ data }) => data && setExpandedDigital(data.symbol)} /></div>
                   <div className="equity-footer"><span>{cryptoExposure.length} assets · {formatMoney(cryptoExposure.reduce((sum, asset) => sum + asset.pricedCost, 0))} known cost</span><span>{digitalPnl.hasMissingCost ? 'Unrealized · known costs only' : 'Unrealized P/L'}</span></div>
-                  <CryptoRealizedHistory transactions={digitalRealizedTransactions} formatMoney={formatMoney} />
+                  <CryptoRealizedHistory transactions={digitalRealizedTransactions} formatMoney={formatMoney} onRefresh={refreshCryptoSales} />
                   {expandedDigital && (() => {
                     const asset = cryptoExposure.find((item) => item.symbol === expandedDigital)
                     if (!asset) return null
                     const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
                     const hasCost = asset.pricedQuantity > 0
                     const pnl = asset.pricedValue - asset.pricedCost
+                    const assetSales = digitalRealizedTransactions.filter((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol)
+                    const realizedSales = assetSales.filter((row) => row.realized_pnl_usd != null)
+                    const realized = realizedSales.reduce((sum, row) => sum + Number(row.realized_pnl_usd), 0)
                     return <div className="equity-drilldown digital-drilldown">
                       <div className="drilldown-head"><span><i /><strong>{asset.symbol} · {asset.name}</strong><small>Position by venue and network</small></span><button onClick={() => setExpandedDigital(null)} aria-label="Close digital asset detail"><X size={14} /></button></div>
                       <div className="equity-drilldown-summary">
                         <span><small>Current value</small><strong>{formatMoney(asset.value)}</strong></span>
-                        <span><small>Avg buy (now)</small><strong>{hasCost ? formatDigitalPrice(asset.pricedCost / asset.pricedQuantity) : '—'} <span>({asset.quantity > 0 ? formatDigitalPrice(asset.value / asset.quantity) : '—'})</span></strong></span>
                         <span><small>Unrealized P/L</small><strong className={hasCost ? pnl >= 0 ? 'value-positive' : 'value-negative' : ''}>{hasCost ? `${pnl >= 0 ? '+' : ''}${formatMoney(pnl)}` : 'Cost pending'}<span className="pnl-return">{hasCost ? formatPnlPercent(pnlPercent(pnl, asset.pricedCost)) : '—'}</span></strong></span>
+                        <span><small>Realized{realizedSales.length < assetSales.length ? ' · known costs' : ''}</small><strong className={!realizedSales.length ? '' : realized >= 0 ? 'value-positive' : 'value-negative'}>{realizedSales.length ? `${realized >= 0 ? '+' : ''}${formatMoney(realized)}` : '—'}<span className="pnl-return">{formatPnlPercent(realizedPnlPercent(assetSales))}</span></strong></span>
                       </div>
                       <div className="digital-venue-scroll"><table className="digital-venue-table">
                         <thead><tr><th>Venue / network</th><th>Units / average</th><th>Value</th><th>Unrealized</th></tr></thead>
@@ -1591,6 +1612,7 @@ function Dashboard({ session }: { session: Session }) {
                           return <tr key={name}><td>{name}</td><td>{formatAmount(detail.quantity)}<small>{detailHasCost ? `Avg ${formatDigitalPrice(detail.costBasis / detail.pricedQuantity)}` : 'Cost pending'}</small></td><td>{formatMoney(detail.value)}</td><td className={detailHasCost ? detailPnl >= 0 ? 'value-positive' : 'value-negative' : ''}>{detailHasCost ? `${detailPnl >= 0 ? '+' : ''}${formatMoney(detailPnl)}` : '—'}<small>{detailHasCost ? formatPnlPercent(pnlPercent(detailPnl, detail.costBasis)) : '—'}</small></td></tr>
                         })}</tbody>
                       </table></div>
+                      <CryptoRealizedHistory transactions={assetSales} symbol={asset.symbol} formatMoney={formatMoney} onRefresh={refreshCryptoSales} />
                     </div>
                   })()}
                 </article>
