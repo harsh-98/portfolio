@@ -27,3 +27,15 @@
 .header-goals-list>button>small{color:#a4abc1;font-size:9px}
 .header-goals-list>button:hover,.header-goals-list>button:focus-visible{background:#3b4053}
 @media(max-width:700px){.header-goals-panel{position:fixed;right:14px;top:calc(70px + env(safe-area-inset-top,0px))}.header-goals>summary{padding:5px;gap:3px}}
+
+.chat-edited{color:#9096a5;font-size:8px;white-space:nowrap}
+.chat-editing{padding-right:10px!important}
+.chat-editing .chat-message-actions{display:none}
+.chat-edit-form{display:grid;gap:5px;margin-top:4px}
+.chat-edit-form textarea{width:100%;min-height:62px;max-height:150px;resize:vertical;border:1px solid #68749b;border-radius:5px;padding:6px 7px;background:#1d2028;color:#e3e5ef;font:inherit;line-height:1.5}
+.chat-edit-form>div{display:flex;justify-content:flex-end;align-items:center;gap:5px}
+.chat-edit-form>div>span{margin-right:auto;color:#969db4;font-size:8px}
+.chat-edit-form button{padding:4px 7px;border:1px solid #50596f;border-radius:4px;background:#343d56;color:#e5e9f5;font-size:10px}
+.chat-edit-form>p{margin:0;color:#efb2a3;font-size:10px;line-height:1.5}
+@media(hover:none){.chat-own{padding-right:92px}}
+@supports(-webkit-touch-callout:none){.chat-edit-form textarea:focus{font-size:16px}}
