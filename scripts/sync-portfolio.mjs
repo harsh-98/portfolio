@@ -1170,6 +1170,31 @@ const unitCostRules = new Map((await supabase(`/rest/v1/assets?${costRuleQuery}`
   .map((asset) => [asset.symbol.toUpperCase(), asset.metadata.cost_basis_override]));
 
 
+// Confirmed acquisition costs are scoped to a wallet, network and token.
+// They annotate future snapshots; historical purchases never credit balances.
+const walletAcquisitionLots = new Map();
+if (sourcePositions.oneinch) {
+  const query = new URLSearchParams({ owner_id: `eq.${ownerId}`, source: "eq.onchain-swap", event_type: "eq.Buy", "metadata->>trade_role": "eq.acquisition", select: "quantity,metadata", limit: "1000" });
+  for (const lot of await supabase(`/rest/v1/brokerage_transactions?${query}`)) {
+    const meta = lot.metadata || {};
+    const quantity = Number(lot.quantity), cost = Number(meta.purchase_value_usd);
+    if (!meta.wallet_address || !meta.chain_id || !meta.contract_address || !Number.isFinite(quantity) || quantity <= 0 || meta.purchase_value_usd == null || !Number.isFinite(cost) || cost < 0) continue;
+    const key = `${meta.wallet_address.toLowerCase()}:${meta.chain_id}:${meta.contract_address.toLowerCase()}`;
+    const group = walletAcquisitionLots.get(key) || { quantity: 0, cost: 0, count: 0, txs: [] };
+    group.quantity += quantity; group.cost += cost; group.count++;
+    group.txs.push(meta.acquisition_tx); walletAcquisitionLots.set(key, group);
+  }
+}
+function walletAcquisitionRule(position) {
+  const meta = position.metadata || {};
+  const key = `${String(meta.wallet_address || "").toLowerCase()}:${meta.chain_id}:${String(meta.contract_address || position.asset.contract_address || "").toLowerCase()}`;
+  const lots = walletAcquisitionLots.get(key), quantity = Number(position.quantity);
+  if (!lots || quantity <= 0 || quantity > lots.quantity * (1 + 1e-9)) return null;
+  // Multiple lots are unambiguous only while the full purchased amount remains.
+  if (lots.count > 1 && Math.abs(quantity - lots.quantity) > lots.quantity * 1e-9) return null;
+  return { scope: "wallet", unit_cost_usd: lots.cost / lots.quantity, source: "Verified swap acquisition carry-through cost", wallet_address: meta.wallet_address, chain_id: meta.chain_id, contract_address: meta.contract_address || position.asset.contract_address, acquisition_txs: lots.txs };
+}
+
 const valuationRuleQuery = new URLSearchParams({ owner_id: `eq.${ownerId}`, "metadata->valuation_override": "not.is.null", select: "symbol,metadata" });
 const valuationRules = new Map((await supabase(`/rest/v1/assets?${valuationRuleQuery}`))
   .filter((asset) => asset.metadata?.valuation_override?.price_usd != null && Number.isFinite(Number(asset.metadata.valuation_override.price_usd)) && Number(asset.metadata.valuation_override.price_usd) >= 0)
@@ -1216,7 +1241,7 @@ async function replaceSource(source, positions) {
       // held elsewhere. Keep explicit position rules scoped to this source key.
       const positionCostRule = previous?.metadata?.cost_basis_override;
       const hasPositionCostRule = positionCostRule?.scope === "position" && positionCostRule.unit_cost_usd != null && Number.isFinite(Number(positionCostRule.unit_cost_usd)) && Number(positionCostRule.unit_cost_usd) >= 0;
-      const unitCostRule = hasPositionCostRule ? positionCostRule : unitCostRules.get(position.asset.symbol.toUpperCase());
+      const unitCostRule = hasPositionCostRule ? positionCostRule : walletAcquisitionRule(position) || unitCostRules.get(position.asset.symbol.toUpperCase());
       const valuationRule = valuationRules.get(position.asset.symbol.toUpperCase());
       const override = source === "wio" ? previous?.metadata?.balance_override : null;
       const overrideTime = Date.parse(override?.effective_at || "");

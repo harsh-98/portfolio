@@ -1294,7 +1294,7 @@ function Dashboard({ session }: { session: Session }) {
     const result = await supabase.from('brokerage_transactions')
       .select('id,event_time,event_type,quantity,price_usd,amount_usd,realized_pnl_usd,metadata,account:accounts(name,institution),asset:assets(symbol,name)')
       .eq('metadata->>instrument_type', 'crypto').order('event_time', { ascending: false }).limit(1000).abortSignal(AbortSignal.timeout(15000))
-    if (result.error) throw new Error(`Unable to refresh recorded crypto sales: ${result.error.message}`)
+    if (result.error) throw new Error(`Unable to refresh recorded crypto trades: ${result.error.message}`)
     const sales = (result.data || []) as unknown as BrokerageTransaction[]
     setBrokerageTransactions((current) => [...current.filter((row) => row.metadata?.instrument_type !== 'crypto'), ...sales])
   }, [])
@@ -1308,8 +1308,9 @@ function Dashboard({ session }: { session: Session }) {
   useEffect(() => {
     if (expandedDigital) void refreshCryptoSales().catch(() => { /* Preserve saved rows; retry is available in the history dialog. */ })
   }, [expandedDigital, refreshCryptoSales])
-  const digitalRealizedTransactions = useMemo(() => brokerageTransactions.filter((transaction) => transaction.metadata?.instrument_type === 'crypto'), [brokerageTransactions])
-  const digitalKnownRealized = digitalRealizedTransactions.filter((transaction) => transaction.realized_pnl_usd != null)
+  const digitalRecordedTransactions = useMemo(() => brokerageTransactions.filter((transaction) => transaction.metadata?.instrument_type === 'crypto'), [brokerageTransactions])
+  const digitalUnpricedSales = digitalRecordedTransactions.filter((transaction) => transaction.event_type.toLowerCase().includes('sell') && transaction.realized_pnl_usd == null)
+  const digitalKnownRealized = digitalRecordedTransactions.filter((transaction) => transaction.realized_pnl_usd != null)
   const digitalRealizedTotal = digitalKnownRealized.reduce((sum, transaction) => sum + Number(transaction.realized_pnl_usd), 0)
   const digitalGridRows = useMemo<EquityGridRow[]>(() => cryptoExposure.map((asset) => ({
     symbol: asset.symbol, name: asset.name, quantity: asset.quantity, value: asset.value,
@@ -1318,11 +1319,11 @@ function Dashboard({ session }: { session: Session }) {
     currentPrice: asset.quantity > 0 ? asset.value / asset.quantity : null,
     pnl: asset.pricedQuantity > 0 ? asset.pricedValue - asset.pricedCost : null,
     pnlPercent: asset.pricedQuantity > 0 ? pnlPercent(asset.pricedValue - asset.pricedCost, asset.pricedCost) : null,
-    realizedPnl: digitalRealizedTransactions.some((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol && row.realized_pnl_usd != null)
-      ? digitalRealizedTransactions.filter((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol).reduce((sum, row) => sum + Number(row.realized_pnl_usd || 0), 0) : null,
-    realizedPnlPercent: realizedPnlPercent(digitalRealizedTransactions.filter((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol)),
+    realizedPnl: digitalRecordedTransactions.some((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol && row.realized_pnl_usd != null)
+      ? digitalRecordedTransactions.filter((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol).reduce((sum, row) => sum + Number(row.realized_pnl_usd || 0), 0) : null,
+    realizedPnlPercent: realizedPnlPercent(digitalRecordedTransactions.filter((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol)),
     allocation: digitalAssetsTotal > 0 ? asset.value / digitalAssetsTotal * 100 : 0,
-  })), [cryptoExposure, digitalAssetsTotal, digitalRealizedTransactions])
+  })), [cryptoExposure, digitalAssetsTotal, digitalRecordedTransactions])
   const digitalColumns = useMemo<ColDef<EquityGridRow>[]>(() => equityColumns.map((column) => {
     if (column.field !== 'averageBuy') return column
     return { ...column, valueFormatter: ({ value }) => value == null ? '—' : formatDigitalPrice(Number(value)),
@@ -1584,17 +1585,17 @@ function Dashboard({ session }: { session: Session }) {
                 </article>
 
                 <article className={overviewPanelClass('digital', 'overview-digital')}>
-                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>{formatMoney(digitalAssetsTotal)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong><em className={digitalPnl.value == null ? 'pnl-return' : digitalPnl.value >= 0 ? 'pnl-return value-positive' : 'pnl-return value-negative'}>{formatPnlPercent(digitalPnl.percent)}</em></span><span><small title={digitalKnownRealized.length < digitalRealizedTransactions.length ? 'Only sales with known purchase costs are included. Open Crypto realized history to inspect pending costs.' : 'Realized profit from recorded historical crypto sales'}>{digitalKnownRealized.length < digitalRealizedTransactions.length ? 'Realized · known' : 'Realized'}</small><strong className={!digitalKnownRealized.length ? '' : digitalRealizedTotal >= 0 ? 'value-positive' : 'value-negative'}>{digitalKnownRealized.length ? `${digitalRealizedTotal >= 0 ? '+' : ''}${formatMoney(digitalRealizedTotal)}` : '—'}</strong><em>{formatPnlPercent(realizedPnlPercent(digitalRealizedTransactions))}</em></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
+                  <div className="panel-heading"><div><p className="eyebrow">DIGITAL ASSETS · &gt;$100</p><h2>{formatMoney(digitalAssetsTotal)} total</h2></div><div className="panel-heading-actions"><div className="equity-pnl-strip"><span><small>Unrealized</small><strong className={digitalPnl.value == null ? '' : digitalPnl.value >= 0 ? 'value-positive' : 'value-negative'}>{digitalPnl.value == null ? '—' : `${digitalPnl.value >= 0 ? '+' : ''}${formatMoney(digitalPnl.value)}`}</strong><em className={digitalPnl.value == null ? 'pnl-return' : digitalPnl.value >= 0 ? 'pnl-return value-positive' : 'pnl-return value-negative'}>{formatPnlPercent(digitalPnl.percent)}</em></span><span><small title={digitalUnpricedSales.length > 0 ? 'Only sales with known purchase costs are included. Open Crypto realized history to inspect pending costs.' : 'Realized profit from recorded historical crypto sales'}>{digitalUnpricedSales.length > 0 ? 'Realized · known' : 'Realized'}</small><strong className={!digitalKnownRealized.length ? '' : digitalRealizedTotal >= 0 ? 'value-positive' : 'value-negative'}>{digitalKnownRealized.length ? `${digitalRealizedTotal >= 0 ? '+' : ''}${formatMoney(digitalRealizedTotal)}` : '—'}</strong><em>{formatPnlPercent(realizedPnlPercent(digitalRecordedTransactions))}</em></span></div><button className="panel-expand-button" onClick={() => setExpandedPanel(expandedPanel === 'digital' ? null : 'digital')} aria-label="Expand digital assets">{expandedPanel === 'digital' ? <Minimize2 size={13} /> : <Maximize2 size={13} />}</button></div></div>
                   <div className="equity-grid digital-grid"><AgGridReact<EquityGridRow> theme={portfolioGridTheme} rowData={digitalGridRows} columnDefs={digitalColumns} defaultColDef={{ sortable: true, resizable: true, suppressHeaderFilterButton: compactStocks }} getRowId={({ data }) => data.symbol} rowHeight={32} headerHeight={28} onRowClicked={({ data }) => data && setExpandedDigital(data.symbol)} /></div>
                   <div className="equity-footer"><span>{cryptoExposure.length} assets · {formatMoney(cryptoExposure.reduce((sum, asset) => sum + asset.pricedCost, 0))} known cost</span><span>{digitalPnl.hasMissingCost ? 'Unrealized · known costs only' : 'Unrealized P/L'}</span></div>
-                  <CryptoRealizedHistory transactions={digitalRealizedTransactions} formatMoney={formatMoney} onRefresh={refreshCryptoSales} />
+                  <CryptoRealizedHistory transactions={digitalRecordedTransactions} formatMoney={formatMoney} onRefresh={refreshCryptoSales} />
                   {expandedDigital && (() => {
                     const asset = cryptoExposure.find((item) => item.symbol === expandedDigital)
                     if (!asset) return null
                     const details = [...asset.breakdown.entries()].sort((a, b) => b[1].value - a[1].value)
                     const hasCost = asset.pricedQuantity > 0
                     const pnl = asset.pricedValue - asset.pricedCost
-                    const assetSales = digitalRealizedTransactions.filter((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol)
+                    const assetSales = digitalRecordedTransactions.filter((row) => row.asset && canonicalCryptoSymbol(row.asset.symbol) === asset.symbol)
                     const realizedSales = assetSales.filter((row) => row.realized_pnl_usd != null)
                     const realized = realizedSales.reduce((sum, row) => sum + Number(row.realized_pnl_usd), 0)
                     return <div className="equity-drilldown digital-drilldown">
@@ -1602,7 +1603,7 @@ function Dashboard({ session }: { session: Session }) {
                       <div className="equity-drilldown-summary">
                         <span><small>Current value</small><strong>{formatMoney(asset.value)}</strong></span>
                         <span><small>Unrealized P/L</small><strong className={hasCost ? pnl >= 0 ? 'value-positive' : 'value-negative' : ''}>{hasCost ? `${pnl >= 0 ? '+' : ''}${formatMoney(pnl)}` : 'Cost pending'}<span className="pnl-return">{hasCost ? formatPnlPercent(pnlPercent(pnl, asset.pricedCost)) : '—'}</span></strong></span>
-                        <span><small>Realized{realizedSales.length < assetSales.length ? ' · known costs' : ''}</small><strong className={!realizedSales.length ? '' : realized >= 0 ? 'value-positive' : 'value-negative'}>{realizedSales.length ? `${realized >= 0 ? '+' : ''}${formatMoney(realized)}` : '—'}<span className="pnl-return">{formatPnlPercent(realizedPnlPercent(assetSales))}</span></strong></span>
+                        <span><small>Realized{assetSales.some((row) => row.event_type.toLowerCase().includes('sell') && row.realized_pnl_usd == null) ? ' · known costs' : ''}</small><strong className={!realizedSales.length ? '' : realized >= 0 ? 'value-positive' : 'value-negative'}>{realizedSales.length ? `${realized >= 0 ? '+' : ''}${formatMoney(realized)}` : '—'}<span className="pnl-return">{formatPnlPercent(realizedPnlPercent(assetSales))}</span></strong></span>
                       </div>
                       <div className="digital-venue-scroll"><table className="digital-venue-table">
                         <thead><tr><th>Venue / network</th><th>Units / average</th><th>Value</th><th>Unrealized</th></tr></thead>
