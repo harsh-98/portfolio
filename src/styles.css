@@ -779,3 +779,14 @@ td > small { display: block; color: #626e77; font-size: 8px; margin-top: 2px; ma
 .digital-drilldown .drilldown-head, .digital-drilldown .equity-drilldown-summary { flex: 0 0 auto; }
 .digital-drilldown .digital-venue-scroll { flex: 1; min-height: 0; max-height: none; }
 .digital-drilldown .option-history-button { margin-top: 6px; }
+
+/* Gold keeps each instrument's unit price separate within its venue. */
+.gold-venue-details { overflow: auto; }
+.gold-venue-table { width: 100%; min-width: 0; table-layout: fixed; font-size: 9px; }
+.gold-venue-table th { position: sticky; top: 0; background: #0d1216; padding: 6px 4px; font-size: 8px; letter-spacing: 0; text-align: right; }
+.gold-venue-table th:first-child { text-align: left; }
+.gold-venue-table td { padding: 7px 4px; text-align: right; vertical-align: top; font-size: 9px; font-variant-numeric: tabular-nums; }
+.gold-venue-table .gold-venue-label { text-align: left; }
+.gold-venue-table small { display: block; margin-top: 3px; font-size: 8px; }
+.gold-venue-label small { white-space: normal; overflow-wrap: anywhere; }
+.gold-venue-table .gold-venue-pnl small { color: inherit; }
